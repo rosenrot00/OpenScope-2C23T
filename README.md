@@ -22,6 +22,35 @@ This firmware is still under active development. Use it at your own risk.
 - Settings menu for brightness, beep volume, sleep behavior, and startup screen.
 - Separate release binaries for old and newer hardware revisions.
 
+## Installation
+
+Download the correct `.bin` file from the release assets:
+
+- Use `F2C23T-v2026.04.1-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.04.1-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+
+To flash the firmware with the built-in bootloader:
+
+1. Turn the device off.
+2. Hold the `MENU` button.
+3. While holding `MENU`, press the power button.
+4. Connect the device to your computer by USB.
+5. A USB drive should appear.
+6. Copy the selected `.bin` file to that drive.
+7. Wait until the copy has finished and the device has flashed the firmware.
+8. Restart the device.
+
+The bootloader is not modified by this firmware. If the application firmware does not boot, you should still be able to enter bootloader mode again with `MENU` + power and flash another firmware file. In normal use this means there is no permanent brick risk from flashing the application firmware.
+
+## Hardware Versions
+
+There are at least two hardware variants:
+
+- `<HW4.0`: older hardware, app start at `0x08008000`, old FPGA transport.
+- `HW4.0`: newer hardware, app start at `0x08007000`, newer FPGA bitstream and GPIOC parallel FPGA transport.
+
+The older hardware build is the primary tested target at the moment. The newer HW4.0 build exists, but still needs real-device testing to confirm that oscilloscope, signal generator, multimeter, storage, and firmware update behavior all work correctly.
+
 ## Build
 
 The default build targets devices older than HW4.0:
@@ -40,15 +69,6 @@ Output files:
 
 - `dist/F2C23T-v2026.04.1-08008000.bin`
 - `dist/F2C23T-v2026.04.1-HW4.0-08007000.bin`
-
-## Hardware Versions
-
-There are at least two hardware variants:
-
-- `<HW4.0`: older hardware, app start at `0x08008000`, old FPGA transport.
-- `HW4.0`: newer hardware, app start at `0x08007000`, newer FPGA bitstream and GPIOC parallel FPGA transport.
-
-The older hardware build is the primary tested target at the moment. The newer HW4.0 build exists, but still needs real-device testing to confirm that oscilloscope, signal generator, multimeter, storage, and firmware update behavior all work correctly.
 
 ## Project Status
 
