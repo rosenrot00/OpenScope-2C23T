@@ -11,16 +11,14 @@ This firmware is still under active development. Use it at your own risk.
 | | | | |
 |---|---|---|---|
 | <img src="https://github.com/user-attachments/assets/17989306-4eee-4da2-8fed-e7fec0660791" width="320"/> | <img src="https://github.com/user-attachments/assets/371b7de3-4b3e-49d5-ad8f-349b1c0e128d" width="320"/> | <img src="https://github.com/user-attachments/assets/eeacebf9-699b-4f2b-977f-c0a2f7650e51" width="320"/> | <img src="https://github.com/user-attachments/assets/47e9052f-8960-4eac-9fb4-16ef131bd813" width="320"/> |
-## Features
+## What This Adds
 
-- Multimeter UI with mode selection, hold/relative modes, battery status, and USB charging indication.
-- Oscilloscope UI with channel controls, trigger menu, move/cursor/measurement menus, rolling display, and improved display layout.
-- Signal generator UI with waveform preview, frequency, duty cycle, amplitude controls, and multiple waveform types.
-- USB mass-storage mode while the device is running.
-- Firmware update by copying a matching `F2C23T*.bin` file to the exposed USB storage.
-- Screenshot capture to the device storage.
-- Settings menu for brightness, beep volume, sleep behavior, and startup screen.
-- Separate release binaries for old and newer hardware revisions.
+In addition to the stock multimeter, oscilloscope, and signal generator functions, this firmware adds:
+
+- **Extended signal-generator waveforms:** sine, square, triangle, sawtooth, half wave, full wave, noise, DC, positive/reverse step, exponential rise/fall, multi-audio, sinker pulse, and Lorentz.
+- **True RMS oscilloscope measurement** based on captured samples instead of the simplified stock-style approximation.
+- **Redesigned UI and control flow** for multimeter, oscilloscope, signal generator, menu, and settings screens.
+- **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display.
 
 ## Installation
 
