@@ -32,6 +32,7 @@ static const key_pin_t key_pins[] = {
 static uint16_t g_battery_mv;
 static uint8_t g_battery_percent;
 static uint8_t g_battery_charging;
+static uint8_t g_battery_filter_valid;
 static uint8_t g_backlight_on;
 static uint8_t g_backlight_percent = 100;
 static volatile uint8_t g_buzzer_on;
@@ -294,35 +295,35 @@ void EXTI9_5_IRQHandler(void) {
 }
 
 static uint8_t battery_percent_from_mv(uint16_t mv) {
-    if (mv > 4100u) {
+    if (mv >= 4100u) {
         return 100;
     }
-    if (mv > 4000u) {
-        return (uint8_t)(95u + (uint32_t)(mv - 4000u) * 50u / 100u);
+    if (mv >= 4000u) {
+        return (uint8_t)(95u + (uint32_t)(mv - 4000u) * 5u / 100u);
     }
-    if (mv > 3900u) {
-        return (uint8_t)(90u + (uint32_t)(mv - 3900u) * 50u / 100u);
+    if (mv >= 3900u) {
+        return (uint8_t)(90u + (uint32_t)(mv - 3900u) * 5u / 100u);
     }
-    if (mv > 3800u) {
-        return (uint8_t)(85u + (uint32_t)(mv - 3800u) * 100u / 100u);
+    if (mv >= 3800u) {
+        return (uint8_t)(85u + (uint32_t)(mv - 3800u) * 5u / 100u);
     }
-    if (mv > 3700u) {
-        return (uint8_t)(75u + (uint32_t)(mv - 3700u) * 100u / 100u);
+    if (mv >= 3700u) {
+        return (uint8_t)(75u + (uint32_t)(mv - 3700u) * 10u / 100u);
     }
-    if (mv > 3600u) {
-        return (uint8_t)(50u + (uint32_t)(mv - 3600u) * 250u / 100u);
+    if (mv >= 3600u) {
+        return (uint8_t)(50u + (uint32_t)(mv - 3600u) * 25u / 100u);
     }
-    if (mv > 3500u) {
-        return (uint8_t)(35u + (uint32_t)(mv - 3500u) * 150u / 100u);
+    if (mv >= 3500u) {
+        return (uint8_t)(35u + (uint32_t)(mv - 3500u) * 15u / 100u);
     }
-    if (mv > 3400u) {
-        return (uint8_t)(15u + (uint32_t)(mv - 3400u) * 200u / 100u);
+    if (mv >= 3400u) {
+        return (uint8_t)(15u + (uint32_t)(mv - 3400u) * 20u / 100u);
     }
-    if (mv > 3300u) {
-        return (uint8_t)(5u + (uint32_t)(mv - 3300u) * 100u / 100u);
+    if (mv >= 3300u) {
+        return (uint8_t)(5u + (uint32_t)(mv - 3300u) * 10u / 100u);
     }
-    if (mv > 3200u) {
-        return (uint8_t)(1u + (uint32_t)(mv - 3200u) * 40u / 100u);
+    if (mv >= 3200u) {
+        return (uint8_t)(1u + (uint32_t)(mv - 3200u) * 4u / 100u);
     }
     return 0;
 }
@@ -364,10 +365,31 @@ void battery_init(void) {
 
 void battery_update(void) {
     uint32_t sum = 0;
-    for (uint8_t i = 0; i < 10; ++i) {
-        sum += battery_adc_read_raw();
+    uint16_t min_raw = 0x0FFFu;
+    uint16_t max_raw = 0;
+    uint16_t raw;
+    uint16_t raw_mv;
+
+    for (uint8_t i = 0; i < 18; ++i) {
+        raw = battery_adc_read_raw();
+        sum += raw;
+        if (raw < min_raw) {
+            min_raw = raw;
+        }
+        if (raw > max_raw) {
+            max_raw = raw;
+        }
     }
-    g_battery_mv = (uint16_t)((sum * 6600u + (4095u * 5u)) / (4095u * 10u));
+    sum -= min_raw;
+    sum -= max_raw;
+    raw_mv = (uint16_t)((sum * 6600u + (4095u * 8u)) / (4095u * 16u));
+
+    if (!g_battery_filter_valid) {
+        g_battery_mv = raw_mv;
+        g_battery_filter_valid = 1;
+    } else {
+        g_battery_mv = (uint16_t)(((uint32_t)g_battery_mv * 7u + raw_mv + 4u) / 8u);
+    }
     g_battery_percent = battery_percent_from_mv(g_battery_mv);
     battery_update_charging_status();
 }
