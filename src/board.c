@@ -251,6 +251,9 @@ static void board_buzzer_start_from_irq(void) {
     if (!percent) {
         return;
     }
+    if (g_buzzer_on) {
+        return;
+    }
     g_buzzer_on = 1;
     TMR_C2DT(TMR5_BASE) = percent_to_timer_compare(percent, 500u);
     TMR_CCEN(TMR5_BASE) |= 1u << 4;

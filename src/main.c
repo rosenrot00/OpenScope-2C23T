@@ -12,6 +12,8 @@ static uint16_t diode_beep_hold_ms;
 static uint16_t live_beep_hold_ms;
 static uint16_t live_beep_phase_ms;
 static uint16_t ui_beep_ms;
+static uint8_t diode_beep_ready;
+static uint8_t diode_beep_was_enabled;
 
 enum {
     DIODE_BEEP_HOLD_MS = 30,
@@ -45,6 +47,16 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
     uint8_t diode_mode = ui_diode_beep_enabled();
     uint8_t live_mode = ui_live_beep_enabled();
 
+    if (diode_mode && !diode_beep_was_enabled) {
+        diode_beep_ready = 0;
+        diode_beep_hold_ms = 0;
+        board_dmm_beep_irq_arm(0);
+        (void)board_dmm_beep_edge_seen();
+    } else if (!diode_mode) {
+        diode_beep_ready = 0;
+    }
+    diode_beep_was_enabled = diode_mode;
+
     if (ui_beep_ms && !diode_mode && !live_mode) {
         board_dmm_beep_irq_arm(0);
         if (elapsed_ms >= ui_beep_ms) {
@@ -60,8 +72,18 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
     if (diode_mode) {
         ui_beep_ms = 0;
         board_dmm_beep_irq_force_full(1);
-        board_dmm_beep_irq_arm(1);
-        dmm_beep_seen = (uint8_t)(board_dmm_beep_active() || board_dmm_beep_edge_seen());
+        if (!diode_beep_ready && dmm_reading_is_real()) {
+            diode_beep_ready = 1;
+            (void)board_dmm_beep_edge_seen();
+        }
+        if (diode_beep_ready) {
+            board_dmm_beep_irq_arm(1);
+            dmm_beep_seen = (uint8_t)(board_dmm_beep_active() || board_dmm_beep_edge_seen());
+        } else {
+            board_dmm_beep_irq_arm(0);
+            (void)board_dmm_beep_edge_seen();
+            dmm_beep_seen = 0;
+        }
         if (dmm_beep_seen) {
             diode_beep_hold_ms = DIODE_BEEP_HOLD_MS;
         } else if (diode_beep_hold_ms > elapsed_ms) {
