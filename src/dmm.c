@@ -551,7 +551,18 @@ static uint8_t reading_implicit_fraction_digits(const char *unit, uint8_t digit_
     if (unit_is_resistance(unit)) {
         return digit_count > 0u ? 1u : 0u;
     }
-    return dmm_current_mode == 2u && text_equal(unit, "V") && digit_count == 4u ? 1u : 0u;
+    if ((dmm_current_mode == 1u || dmm_current_mode == 2u) &&
+        text_equal(unit, "V") &&
+        digit_count == 4u) {
+        return 1u;
+    }
+    return 0;
+}
+
+static uint8_t voltage_leading_dot_is_negative_marker(const char *unit, int8_t dot_index) {
+    return unit_is_voltage(unit) &&
+           (dmm_current_mode == 1u || dmm_current_mode == 2u) &&
+           dot_index == 0;
 }
 
 static uint8_t unit_is_capacitance(const char *unit) {
@@ -617,6 +628,10 @@ static uint8_t format_value(const uint8_t frame[DMM_FRAME_LEN], const char *unit
         if (segments[i] & 0x10u) {
             dot_index = (int8_t)i;
         }
+    }
+    if (voltage_leading_dot_is_negative_marker(unit, dot_index)) {
+        negative = 1;
+        dot_index = -1;
     }
     has_dot = dot_index >= 0 ? 1u : 0u;
 
