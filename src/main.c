@@ -70,7 +70,6 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
     }
 
     if (diode_mode) {
-        ui_beep_ms = 0;
         board_dmm_beep_irq_force_full(1);
         if (!diode_beep_ready && dmm_reading_is_real()) {
             diode_beep_ready = 1;
@@ -96,7 +95,6 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
         buzzer_on = diode_beep_hold_ms ? 1u : 0u;
         force_full = 1;
     } else if (live_mode) {
-        ui_beep_ms = 0;
         board_dmm_beep_irq_force_full(0);
         board_dmm_beep_irq_arm(0);
         (void)board_dmm_beep_edge_seen();
@@ -133,9 +131,23 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
 
     ui_set_live_wire_detected((uint8_t)(live_mode && live_beep_hold_ms));
 
-    if (force_full) {
+    if (ui_beep_ms && !buzzer_on) {
+        if (elapsed_ms >= ui_beep_ms) {
+            ui_beep_ms = 0;
+            board_buzzer_set(0);
+        } else {
+            ui_beep_ms = (uint16_t)(ui_beep_ms - elapsed_ms);
+            board_buzzer_set(1);
+        }
+    } else if (force_full) {
+        if (buzzer_on) {
+            ui_beep_ms = 0;
+        }
         board_buzzer_set_full(buzzer_on);
     } else if (fixed_volume) {
+        if (buzzer_on) {
+            ui_beep_ms = 0;
+        }
         board_buzzer_set_percent(buzzer_on, fixed_volume);
     } else if (ui_beep_ms) {
         if (elapsed_ms >= ui_beep_ms) {
