@@ -1021,6 +1021,19 @@ uint8_t dmm_live_wire_active(void) {
     return !text_equal(dmm_value, "L1UE");
 }
 
+uint8_t dmm_diode_continuity_active(void) {
+    if (dmm_current_mode != 4u || !dmm_reading_is_real() || !dmm_numeric_valid) {
+        return 0;
+    }
+    if (unit_is_resistance(dmm_unit)) {
+        return dmm_value_milli <= 50000;
+    }
+    if (unit_is_voltage(dmm_unit)) {
+        return dmm_value_milli <= 100;
+    }
+    return 0;
+}
+
 void dmm_uart_irq_handler(void) {
     uint32_t status = USART_STS(USART3_BASE);
 

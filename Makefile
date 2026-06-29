@@ -1,5 +1,5 @@
 PROJECT := f2c23t_hello
-VERSION ?= v2026.04.1
+VERSION ?= v2026.05.2
 BUILD_ROOT ?= build
 BUILD ?= $(BUILD_ROOT)
 DIST ?= dist

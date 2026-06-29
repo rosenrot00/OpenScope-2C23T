@@ -1,4 +1,5 @@
 #include "board.h"
+#include "app_config.h"
 #include "dmm.h"
 #include "display.h"
 #include "fw_update.h"
@@ -76,8 +77,13 @@ static void dmm_beep_service(uint8_t elapsed_ms) {
             (void)board_dmm_beep_edge_seen();
         }
         if (diode_beep_ready) {
+#if HW_TARGET_HW40
+            board_dmm_beep_irq_arm(0);
+            dmm_beep_seen = dmm_diode_continuity_active();
+#else
             board_dmm_beep_irq_arm(1);
             dmm_beep_seen = (uint8_t)(board_dmm_beep_active() || board_dmm_beep_edge_seen());
+#endif
         } else {
             board_dmm_beep_irq_arm(0);
             (void)board_dmm_beep_edge_seen();

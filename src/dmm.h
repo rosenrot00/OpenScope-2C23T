@@ -15,4 +15,5 @@ const char *dmm_unit_text(void);
 const char *dmm_status_text(void);
 uint8_t dmm_reading_is_real(void);
 uint8_t dmm_live_wire_active(void);
+uint8_t dmm_diode_continuity_active(void);
 void dmm_uart_irq_handler(void);

@@ -1,0 +1,21 @@
+name: Build firmware
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build release binaries
+        run: make release
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: f2c23t-firmware
+          path: dist/*

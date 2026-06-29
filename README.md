@@ -8,9 +8,8 @@ This firmware is still under active development. Use it at your own risk.
 
 ## Screenshots
 
-| | | | |
-|---|---|---|---|
-| <img src="https://github.com/user-attachments/assets/17989306-4eee-4da2-8fed-e7fec0660791" width="320"/> | <img src="https://github.com/user-attachments/assets/371b7de3-4b3e-49d5-ad8f-349b1c0e128d" width="320"/> | <img src="https://github.com/user-attachments/assets/eeacebf9-699b-4f2b-977f-c0a2f7650e51" width="320"/> | <img src="https://github.com/user-attachments/assets/47e9052f-8960-4eac-9fb4-16ef131bd813" width="320"/> |
+<!-- Add screenshots here -->
+
 ## What This Adds
 
 In addition to the stock multimeter, oscilloscope, and signal generator functions, this firmware adds:
@@ -18,14 +17,38 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Extended signal-generator waveforms:** sine, square, triangle, sawtooth, half wave, full wave, noise, DC, positive/reverse step, exponential rise/fall, multi-audio, sinker pulse, and Lorentz.
 - **True RMS oscilloscope measurement** based on captured samples instead of the simplified stock-style approximation.
 - **Redesigned UI and control flow** for multimeter, oscilloscope, signal generator, menu, and settings screens.
-- **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display.
+- **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display, and clearer scale/readout handling.
+- **Runtime USB mass storage** while the device is running.
+- **In-app firmware update** by copying a matching `F2C23T*.bin` file to the exposed USB storage.
+- **Screenshot capture** to the device storage.
+- **Configurable settings** for brightness, beep volume, sleep behavior, and startup screen.
+- **Separate release binaries** for old and newer hardware revisions.
+
+## Build
+
+The default build targets devices older than HW4.0:
+
+```sh
+make
+```
+
+Release builds create both hardware targets:
+
+```sh
+make release
+```
+
+Output files:
+
+- `dist/F2C23T-v2026.05.2-08008000.bin`
+- `dist/F2C23T-v2026.05.2-HW4.0-08007000.bin`
 
 ## Installation
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.04.1-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.04.1-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.05.2-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.05.2-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 To flash the firmware with the built-in bootloader:
 
@@ -49,26 +72,6 @@ There are at least two hardware variants:
 
 The older hardware build is the primary tested target at the moment. The newer HW4.0 build exists, but still needs real-device testing to confirm that oscilloscope, signal generator, multimeter, storage, and firmware update behavior all work correctly.
 
-## Build
-
-The default build targets devices older than HW4.0:
-
-```sh
-make
-```
-
-Release builds create both hardware targets:
-
-```sh
-make release
-```
-
-Output files:
-
-- `dist/F2C23T-v2026.04.1-08008000.bin`
-- `dist/F2C23T-v2026.04.1-HW4.0-08007000.bin`
-
 ## Project Status
 
 The firmware already covers the core workflows, but there are certainly still things that can be improved, cleaned up, optimized, or made more accurate. Contributions, testing feedback, and hardware-specific findings are welcome.
-

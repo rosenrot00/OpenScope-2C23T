@@ -177,6 +177,7 @@ void board_buzzer_init(void) {
     gpio_config_mask(GPIOA_BASE, 1u << 0, 0x1); // PA0 backlight stays off until display is ready
     gpio_clear(GPIOA_BASE, 1u << 0);
     gpio_config_mask(GPIOA_BASE, 1u << 1, 0xBu); // TMR5 CH2, AF push-pull
+#if !HW_TARGET_HW40
     gpio_config_mask(GPIOC_BASE, 1u << 7, 0x8u); // DMM beep request, active low
     gpio_set(GPIOC_BASE, 1u << 7);
     AFIO_EXTICR2 = (AFIO_EXTICR2 & ~(0xFu << 12)) | (0x2u << 12); // EXTI7 = port C
@@ -185,6 +186,10 @@ void board_buzzer_init(void) {
     EXTI_RTSR &= ~(1u << 7);
     EXTI_IMR |= 1u << 7;
     REG32(NVIC_ISER0) = 1u << 23; // EXTI9_5 IRQ
+#else
+    EXTI_IMR &= ~(1u << 7);
+    EXTI_PR = 1u << 7;
+#endif
 
     TMR_CTRL1(TMR5_BASE) = 0;
     TMR_CCEN(TMR5_BASE) = 0;
@@ -246,6 +251,7 @@ void board_buzzer_set_volume(uint8_t percent) {
     }
 }
 
+#if !HW_TARGET_HW40
 static void board_buzzer_start_from_irq(void) {
     uint8_t percent = g_dmm_beep_irq_full ? 100u : g_buzzer_volume;
     if (!percent) {
@@ -259,9 +265,14 @@ static void board_buzzer_start_from_irq(void) {
     TMR_CCEN(TMR5_BASE) |= 1u << 4;
     tmr5_update_counter();
 }
+#endif
 
 uint8_t board_dmm_beep_active(void) {
+#if HW_TARGET_HW40
+    return 0;
+#else
     return gpio_read(GPIOC_BASE, 1u << 7) ? 0u : 1u;
+#endif
 }
 
 uint8_t board_dmm_beep_edge_seen(void) {
@@ -286,6 +297,7 @@ void board_dmm_beep_irq_force_full(uint8_t enabled) {
 }
 
 void EXTI9_5_IRQHandler(void) {
+#if !HW_TARGET_HW40
     if (EXTI_PR & (1u << 7)) {
         EXTI_PR = 1u << 7;
         if (!gpio_read(GPIOC_BASE, 1u << 7)) {
@@ -295,6 +307,11 @@ void EXTI9_5_IRQHandler(void) {
             }
         }
     }
+#else
+    if (EXTI_PR & (1u << 7)) {
+        EXTI_PR = 1u << 7;
+    }
+#endif
 }
 
 static uint8_t battery_percent_from_mv(uint16_t mv) {
