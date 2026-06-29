@@ -559,10 +559,10 @@ static uint8_t reading_implicit_fraction_digits(const char *unit, uint8_t digit_
     return 0;
 }
 
-static uint8_t voltage_leading_dot_is_negative_marker(const char *unit, int8_t dot_index) {
-    return unit_is_voltage(unit) &&
-           (dmm_current_mode == 1u || dmm_current_mode == 2u) &&
-           dot_index == 0;
+static uint8_t voltage_leading_dot_is_negative_marker(const char *unit, const uint8_t segments[4]) {
+    return (dmm_current_mode == 1u || (dmm_current_mode == 0u && unit_is_voltage(unit))) &&
+           unit_is_voltage(unit) &&
+           (segments[0] & 0x10u);
 }
 
 static uint8_t unit_is_capacitance(const char *unit) {
@@ -624,14 +624,19 @@ static uint8_t format_value(const uint8_t frame[DMM_FRAME_LEN], const char *unit
     segments[2] = (uint8_t)((frame[4] & 0xF0u) | (frame[5] & 0x0Fu));
     segments[3] = (uint8_t)((frame[5] & 0xF0u) | (frame[6] & 0x0Fu));
 
+    uint8_t leading_dot_negative = voltage_leading_dot_is_negative_marker(unit, segments);
+
     for (uint8_t i = 0; i < 3u; ++i) {
+        if (leading_dot_negative && i == 0u) {
+            continue;
+        }
         if (segments[i] & 0x10u) {
             dot_index = (int8_t)i;
         }
     }
-    if (voltage_leading_dot_is_negative_marker(unit, dot_index)) {
+    if (leading_dot_negative) {
         negative = 1;
-        dot_index = -1;
+        segments[0] = (uint8_t)(segments[0] & 0xEFu);
     }
     has_dot = dot_index >= 0 ? 1u : 0u;
 
