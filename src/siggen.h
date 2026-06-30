@@ -22,4 +22,5 @@ enum {
 };
 
 void siggen_configure(uint8_t enabled, uint8_t wave, uint32_t freq_hz, uint8_t duty_percent, uint8_t amplitude_tenths_v);
+void siggen_shutdown(void);
 uint8_t siggen_ready(void);

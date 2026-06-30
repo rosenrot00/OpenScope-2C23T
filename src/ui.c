@@ -33,7 +33,7 @@
 #define GEN_FREQ_UNIT_COUNT 3u
 #define GEN_DUTY_EDIT_DIGITS 3u
 #define GEN_AMP_EDIT_DIGITS 2u
-#define FIRMWARE_VERSION_TEXT "v2026.05.2"
+#define FIRMWARE_VERSION_TEXT "v2026.06.2"
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1
 #endif
@@ -158,9 +158,17 @@ enum {
     SCOPE_SAMPLES_PER_DIV = 25,
     SCOPE_VISIBLE_SAMPLE_COUNT = SCOPE_X_DIVS * SCOPE_SAMPLES_PER_DIV,
     SCOPE_FAST_HW_SAMPLE_NS = 20,
+#if HW_TARGET_HW40
+    SCOPE_FAST_HW_TIMEBASE_MAX = 5,
+    SCOPE_SOFT_ROLL_TIMEBASE = 255,
+    SCOPE_IRQ_ROLL_TIMEBASE_START = 21,
+    SCOPE_SLOW_ROLL_TIMEBASE_START = 21,
+#else
+    SCOPE_FAST_HW_TIMEBASE_MAX = 3,
     SCOPE_SOFT_ROLL_TIMEBASE = 18,
     SCOPE_IRQ_ROLL_TIMEBASE_START = 19,
     SCOPE_SLOW_ROLL_TIMEBASE_START = SCOPE_SOFT_ROLL_TIMEBASE,
+#endif
     SCOPE_SLOW_ROLL_MAX_POINTS = 300,
     SCOPE_SLOW_ROLL_MIN_MS = 20,
     SCOPE_SOFT_ROLL_MAX_POINTS_PER_FRAME = 12,
@@ -218,6 +226,7 @@ static uint8_t gen_freq_unit = GEN_DEFAULT_FREQ_UNIT;
 static uint8_t gen_deferred_apply;
 static uint16_t gen_deferred_apply_ms;
 static uint8_t gen_output_applied;
+static uint8_t gen_running;
 static uint8_t scope_samples[SCOPE_SAMPLE_BYTES] __attribute__((aligned(4)));
 static uint8_t scope_capture_samples[SCOPE_SAMPLE_BYTES] __attribute__((aligned(4)));
 static uint8_t scope_frame_valid;
@@ -317,7 +326,6 @@ enum {
     SETTINGS_ROW_COUNT = 5,
     SETTINGS_SELECTABLE_COUNT = 4,
     SETTINGS_GRID_COLUMNS = 3,
-    SETTINGS_SLEEP_TIMEOUT_MS = 600000,
     GEN_PREVIEW_CYCLES = 3,
     GEN_DEFERRED_APPLY_MS = 100,
 };
@@ -527,7 +535,7 @@ static const char *const settings_row_labels[] = {"BEEP", "DISPLAY", "START", "S
 static const char *const startup_labels[] = {"MENU", "DMM", "SCOPE", "GEN"};
 static const char *const beep_level_labels[] = {"OFF", "LOW", "MEDIUM", "HIGH", "MAX"};
 static const char *const brightness_level_labels[] = {"DIM", "LOW", "MEDIUM", "HIGH", "BRIGHT"};
-static const char *const sleep_labels[] = {"OFF", "10 MIN"};
+static const char *const sleep_labels[] = {"OFF", "10 MIN", "20 MIN", "30 MIN"};
 static const uint8_t beep_level_percent[SETTINGS_LEVEL_COUNT] = {0, 10, 50, 75, 100};
 static const uint8_t brightness_level_percent[SETTINGS_LEVEL_COUNT] = {20, 40, 60, 80, 100};
 
@@ -1705,7 +1713,7 @@ static void draw_scope_measure_param_row(uint16_t x, uint16_t y) {
 static uint16_t scope_visible_sample_count(void) {
     uint8_t timebase = scope_safe_timebase();
 
-    if (timebase <= 3u) {
+    if (timebase <= SCOPE_FAST_HW_TIMEBASE_MAX) {
         uint32_t screen_ns = scope_timebase_unit_ns[timebase] * SCOPE_X_DIVS * 10u;
         uint32_t count = (screen_ns + SCOPE_FAST_HW_SAMPLE_NS / 2u) / SCOPE_FAST_HW_SAMPLE_NS;
         if (count < 2u) {
@@ -3599,7 +3607,7 @@ static uint32_t scope_timebase_unit_ns_value(void) {
 }
 
 static uint32_t scope_sample_period_ns(void) {
-    if (scope_safe_timebase() <= 3u) {
+    if (scope_safe_timebase() <= SCOPE_FAST_HW_TIMEBASE_MAX) {
         return SCOPE_FAST_HW_SAMPLE_NS;
     }
 
@@ -5434,7 +5442,8 @@ static const char *settings_value_text(uint8_t row, char out[12]) {
         return startup_label();
     }
     if (row == 3u) {
-        return sleep_labels[ui_settings.sleep_enabled ? 1u : 0u];
+        uint8_t sleep = ui_settings.sleep_enabled < SETTINGS_SLEEP_COUNT ? ui_settings.sleep_enabled : 0u;
+        return sleep_labels[sleep];
     }
     return FIRMWARE_VERSION_TEXT;
 }
@@ -5714,14 +5723,13 @@ static uint8_t battery_blink_tick(uint32_t elapsed_ms) {
 
 static void ui_switch_mode(ui_mode_t mode) {
     ui_mode_t old_mode = ui.mode;
-    uint8_t gen_was_running = ui.running;
 
     if (ui.mode != mode) {
         dmm_stats_reset();
     }
     if (old_mode == UI_MODE_GEN && mode != UI_MODE_GEN) {
-        ui.running = 0;
-        if (gen_was_running || gen_output_applied) {
+        gen_running = ui.running ? 1u : 0u;
+        if (gen_running || gen_output_applied || gen_deferred_apply) {
             gen_apply();
         } else {
             gen_deferred_apply = 0;
@@ -5760,7 +5768,7 @@ static void ui_switch_mode(ui_mode_t mode) {
         scope_trace_cache[1].valid = 0;
 #endif
     } else if (mode == UI_MODE_GEN) {
-        ui.running = 0;
+        ui.running = gen_running;
         gen_freq_edit_pos = 0;
         gen_freq_sync_editor_unit();
         gen_prepare_state();
@@ -6101,17 +6109,17 @@ static void gen_prepare_state(void) {
 
 static void gen_apply(void) {
     gen_prepare_state();
-    if (!ui.running && !gen_output_applied) {
+    if (!gen_running && !gen_output_applied) {
         gen_deferred_apply = 0;
         gen_deferred_apply_ms = 0;
         return;
     }
-    siggen_configure(ui.running,
+    siggen_configure(gen_running,
                      ui.gen_wave,
                      ui.gen_freq_hz,
                      ui.gen_duty_percent,
                      ui.gen_amp_tenths_v);
-    gen_output_applied = ui.running ? 1u : 0u;
+    gen_output_applied = gen_running ? 1u : 0u;
     gen_deferred_apply = 0;
     gen_deferred_apply_ms = 0;
 }
@@ -7226,8 +7234,7 @@ static void settings_adjust_current(int8_t dir) {
     } else if (ui.settings_row == 2u) {
         settings_cycle_startup(dir);
     } else if (ui.settings_row == 3u) {
-        (void)dir;
-        ui_settings.sleep_enabled ^= 1u;
+        cycle_u8(&ui_settings.sleep_enabled, SETTINGS_SLEEP_COUNT, dir);
         ui.sleep_ms = 0;
         ui.sleep_due = 0;
     } else {
@@ -7621,6 +7628,7 @@ void ui_handle_keys(uint32_t events) {
         } else {
             ui.running ^= 1u;
             if (ui.mode == UI_MODE_GEN) {
+                gen_running = ui.running ? 1u : 0u;
                 gen_apply();
             } else if (ui.running) {
                 scope_hw_arm();
@@ -7717,6 +7725,20 @@ uint8_t ui_auto_sleep_due(void) {
     return ui.sleep_due;
 }
 
+static uint32_t settings_sleep_timeout_ms(void) {
+    static const uint32_t timeouts_ms[SETTINGS_SLEEP_COUNT] = {
+        0u,
+        10u * 60u * 1000u,
+        20u * 60u * 1000u,
+        30u * 60u * 1000u,
+    };
+    uint8_t sleep = ui_settings.sleep_enabled;
+    if (sleep >= SETTINGS_SLEEP_COUNT) {
+        return 0;
+    }
+    return timeouts_ms[sleep];
+}
+
 uint8_t ui_diode_beep_enabled(void) {
     return ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE && ui.dmm_mode == DMM_MODE_DIODE;
 }
@@ -7765,11 +7787,12 @@ void ui_tick(uint32_t elapsed_ms) {
     uint8_t battery_changed = 0;
     uint8_t fw_update_changed = 0;
     fw_update_status_t fw_status;
+    uint32_t sleep_timeout_ms = settings_sleep_timeout_ms();
 
-    if (ui_settings.sleep_enabled) {
+    if (sleep_timeout_ms) {
         uint32_t sleep_next = ui.sleep_ms + elapsed_ms;
-        if (sleep_next >= SETTINGS_SLEEP_TIMEOUT_MS) {
-            ui.sleep_ms = SETTINGS_SLEEP_TIMEOUT_MS;
+        if (sleep_next >= sleep_timeout_ms) {
+            ui.sleep_ms = sleep_timeout_ms;
             ui.sleep_due = 1;
         } else {
             ui.sleep_ms = sleep_next;

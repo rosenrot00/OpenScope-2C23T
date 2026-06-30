@@ -13,11 +13,13 @@ void Reset_Handler(void);
 void Reset_Handler_C(void);
 void Default_Handler(void);
 void EXTI3_IRQHandler(void);
+void EXTI4_IRQHandler(void);
 void EXTI9_5_IRQHandler(void);
 void USB_LP_CAN1_RX0_IRQHandler(void);
 void TMR1_UP_IRQHandler(void);
 void USART3_IRQHandler(void);
 void power_key_irq_handler(void);
+void fpga_capture_ready_irq_handler(void);
 int main(void);
 
 __attribute__((section(".isr_vector"), used))
@@ -35,7 +37,8 @@ void (*const vector_table[128])(void) = {
     [15] = Default_Handler,
     [16 ... 24] = Default_Handler,
     [25] = EXTI3_IRQHandler,
-    [26 ... 35] = Default_Handler,
+    [26] = EXTI4_IRQHandler,
+    [27 ... 35] = Default_Handler,
     [36] = USB_LP_CAN1_RX0_IRQHandler,
     [37 ... 38] = Default_Handler,
     [39] = EXTI9_5_IRQHandler,
@@ -133,4 +136,8 @@ void Default_Handler(void) {
 
 void EXTI3_IRQHandler(void) {
     power_key_irq_handler();
+}
+
+void EXTI4_IRQHandler(void) {
+    fpga_capture_ready_irq_handler();
 }

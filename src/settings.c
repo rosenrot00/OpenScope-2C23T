@@ -101,7 +101,9 @@ static void settings_clamp(settings_state_t *settings) {
     if (settings->last_screen > 2u) {
         settings->last_screen = 0;
     }
-    settings->sleep_enabled = settings->sleep_enabled ? 1u : 0u;
+    if (settings->sleep_enabled >= SETTINGS_SLEEP_COUNT) {
+        settings->sleep_enabled = 0;
+    }
     for (uint8_t ch = 0; ch < SETTINGS_SCOPE_CHANNEL_COUNT; ++ch) {
         for (uint8_t range = 0; range < SETTINGS_SCOPE_RANGE_COUNT; ++range) {
             if (settings->scope_bias[ch][range] > 4095u) {
@@ -124,7 +126,7 @@ static uint16_t settings_payload(const settings_state_t *settings) {
                       ((settings->brightness_level & 0x07u) << 7) |
                       ((settings->startup_screen & 0x03u) << 10) |
                       ((settings->last_screen & 0x03u) << 12) |
-                      ((settings->sleep_enabled & 0x01u) << 14));
+                      ((settings->sleep_enabled & 0x03u) << 14));
 }
 
 static uint32_t settings_record_for(const settings_state_t *settings) {
@@ -206,7 +208,7 @@ static uint8_t settings_record_valid(uint32_t record, settings_state_t *settings
     settings->brightness_level = (uint8_t)((payload >> 7) & 0x07u);
     settings->startup_screen = (uint8_t)((payload >> 10) & 0x03u);
     settings->last_screen = (uint8_t)((payload >> 12) & 0x03u);
-    settings->sleep_enabled = (uint8_t)((payload >> 14) & 0x01u);
+    settings->sleep_enabled = (uint8_t)((payload >> 14) & 0x03u);
     settings_clamp(settings);
     return 1;
 }

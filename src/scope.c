@@ -19,8 +19,13 @@
 enum {
     SCOPE_TIMING_SETTLE_MS = 2,
     SCOPE_ANALOG_RANGE_SETTLE_MS = 2,
+#if HW_TARGET_HW40
+    SCOPE_FAST_ALIGN_TIMEBASE_MAX = 5,
+    SCOPE_HW_SLOW_TIMEBASE_START = 21,
+#else
     SCOPE_FAST_ALIGN_TIMEBASE_MAX = 3,
     SCOPE_HW_SLOW_TIMEBASE_START = 18,
+#endif
     SCOPE_SLOW_POINT_COUNT = 300,
     SCOPE_SLOW_TIMER_TICK_HZ = 10000u,
 };
@@ -526,7 +531,7 @@ uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
     read_dst = dst;
     read_len = FPGA_SCOPE_BUFFER_BYTES;
     if (timebase <= SCOPE_FAST_ALIGN_TIMEBASE_MAX) {
-        // Original firmware reads the four fastest ranges into buffer+1.
+        // Original firmware reads the fastest ranges into buffer+1.
         // That keeps the FPGA byte stream phase aligned for CH1/CH2 pairs.
         dst[0] = 128u;
         dst[1] = 128u;

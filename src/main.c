@@ -4,6 +4,7 @@
 #include "display.h"
 #include "fw_update.h"
 #include "settings.h"
+#include "siggen.h"
 #include "ui.h"
 #include "usb_msc.h"
 
@@ -31,6 +32,7 @@ enum {
 
 static void shutdown_now(uint8_t beep) {
     board_dmm_beep_irq_arm(0);
+    siggen_shutdown();
     if (beep) {
         board_buzzer_set(1);
         delay_ms(SHUTDOWN_BEEP_MS);

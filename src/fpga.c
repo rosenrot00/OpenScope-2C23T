@@ -37,10 +37,13 @@ enum {
     FPGA_HW4_MOSI_PIN = 1u << 5,  // PB5
     FPGA_HW4_SELECT_PIN = 1u << 15, // PA15
     FPGA_HW4_RESET_PIN = 1u << 8, // PC8
+    FPGA_HW4_AUX_PIN = 1u << 10,  // PC10, initialized by stock 2.1.0 board setup
+    FPGA_HW4_READY_POLL_CYCLES = 4000u,
 };
 
 static uint32_t fpga_last_tuning_word;
 static uint32_t fpga_last_span;
+static volatile uint8_t fpga_hw4_capture_ready_seen;
 
 static void fpga_hw4_short_delay(void) {
     for (volatile uint32_t i = 0; i < 80u; ++i) {
@@ -124,6 +127,26 @@ static uint8_t fpga_hw4_parallel_read_byte(void) {
     return (uint8_t)(GPIO_IDR(GPIOC_BASE) & FPGA_HW4_BUS_MASK);
 }
 
+static void fpga_hw4_post_config_flush(void) {
+    gpio_clear(GPIOB_BASE, FPGA_HW4_MOSI_PIN);
+    gpio_set(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
+    fpga_hw4_bus_input();
+    for (uint8_t i = 0; i < 16u; ++i) {
+        (void)fpga_hw4_parallel_read_byte();
+    }
+    gpio_clear(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
+    gpio_clear(GPIOB_BASE, FPGA_HW4_MOSI_PIN);
+}
+
+static void fpga_hw4_ready_irq_enable(void) {
+    AFIO_EXTICR2 = (AFIO_EXTICR2 & ~0xFu) | 0x1u; // EXTI4 = port B
+    EXTI_PR = FPGA_HW4_MISO_PIN;
+    EXTI_RTSR |= FPGA_HW4_MISO_PIN;
+    EXTI_FTSR &= ~FPGA_HW4_MISO_PIN;
+    EXTI_IMR |= FPGA_HW4_MISO_PIN;
+    REG32(NVIC_ISER0) = 1u << 10; // EXTI4 IRQ
+}
+
 static void fpga_hw4_write_timing_frame(uint32_t tuning_word, uint32_t span) {
     gpio_set(GPIOB_BASE, FPGA_HW4_MOSI_PIN);
     gpio_set(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
@@ -155,11 +178,12 @@ static void fpga_hw4_begin(void) {
     gpio_config_mask(GPIOB_BASE, FPGA_HW4_MISO_PIN, 0x4u);
     gpio_config_mask(GPIOA_BASE, FPGA_HW4_SELECT_PIN, 0x1u);
     gpio_config_mask(GPIOA_BASE, 1u << 8, 0x9u);
-    gpio_config_mask(GPIOC_BASE, FPGA_HW4_RESET_PIN, 0x1u);
+    gpio_config_mask(GPIOC_BASE, FPGA_HW4_RESET_PIN | FPGA_HW4_AUX_PIN, 0x1u);
     fpga_hw4_bus_input();
 
     gpio_set(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
     gpio_clear(GPIOB_BASE, FPGA_HW4_CLK_PIN | FPGA_HW4_MOSI_PIN);
+    gpio_clear(GPIOC_BASE, FPGA_HW4_AUX_PIN);
     fpga_start_clock_output();
 }
 
@@ -193,6 +217,9 @@ void fpga_init_once(void) {
     status = fpga_hw4_read_register32(0x41000000u);
     fpga_hw4_write_command_word(0x3A00u);
     delay_ms(100);
+    fpga_hw4_post_config_flush();
+    fpga_hw4_capture_ready_seen = 0;
+    fpga_hw4_ready_irq_enable();
     fpga_ready_flag = status != 0xFFFFFFFFu ? 1u : 0u;
     fpga_loaded = 1u;
 }
@@ -220,11 +247,29 @@ void fpga_write_signal_buffer(const uint8_t *data, uint16_t len) {
 }
 
 void fpga_capture_latch(void) {
+    fpga_hw4_capture_ready_seen = 0;
     fpga_hw4_write_timing_frame(fpga_last_tuning_word, fpga_last_span);
 }
 
 uint8_t fpga_capture_ready(void) {
-    return gpio_read(GPIOB_BASE, FPGA_HW4_MISO_PIN) ? 1u : 0u;
+    if (fpga_hw4_capture_ready_seen || gpio_read(GPIOB_BASE, FPGA_HW4_MISO_PIN)) {
+        fpga_hw4_capture_ready_seen = 0;
+        return 1u;
+    }
+    for (uint32_t i = 0; i < FPGA_HW4_READY_POLL_CYCLES; ++i) {
+        if (fpga_hw4_capture_ready_seen || gpio_read(GPIOB_BASE, FPGA_HW4_MISO_PIN)) {
+            fpga_hw4_capture_ready_seen = 0;
+            return 1u;
+        }
+    }
+    return 0;
+}
+
+void fpga_capture_ready_irq_handler(void) {
+    if (EXTI_PR & FPGA_HW4_MISO_PIN) {
+        EXTI_PR = FPGA_HW4_MISO_PIN;
+        fpga_hw4_capture_ready_seen = 1;
+    }
 }
 
 uint8_t fpga_capture_read(uint8_t *dst, uint16_t len) {
@@ -248,6 +293,9 @@ uint8_t fpga_capture_read_slow_point(uint8_t sample[2]) {
 }
 
 #else
+
+void fpga_capture_ready_irq_handler(void) {
+}
 
 static void spi3_write_raw(uint8_t value) {
     while (!(SPI_STS(SPI3_BASE) & SPI_STS_TXE)) {

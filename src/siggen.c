@@ -263,6 +263,16 @@ void siggen_configure(uint8_t enabled, uint8_t wave, uint32_t freq_hz, uint8_t d
     last_amplitude_tenths_v = amplitude_tenths_v;
 }
 
+void siggen_shutdown(void) {
+    if (last_enabled == 1u) {
+        siggen_configure(0,
+                         last_wave,
+                         last_freq_hz ? last_freq_hz : 1000u,
+                         last_duty_percent ? last_duty_percent : 50u,
+                         last_amplitude_tenths_v ? last_amplitude_tenths_v : 33u);
+    }
+}
+
 uint8_t siggen_ready(void) {
     return fpga_ready();
 }
