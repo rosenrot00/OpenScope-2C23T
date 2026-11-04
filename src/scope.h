@@ -2,6 +2,23 @@
 
 #include <stdint.h>
 
+enum {
+    SCOPE_HW_SPAN_MAX = 0x100000,
+};
+
+// The FPGA takes one sample every 20 ns * SCOPE_HW_SPAN_MAX / span.
+static inline uint32_t scope_hw_span_for_unit_ns(uint32_t unit_ns) {
+    uint32_t span = 52428800u / unit_ns;
+
+    return span > SCOPE_HW_SPAN_MAX ? SCOPE_HW_SPAN_MAX : span;
+}
+
+static inline uint32_t scope_hw_sample_period_ns(uint32_t unit_ns) {
+    uint32_t span = scope_hw_span_for_unit_ns(unit_ns);
+
+    return (20u * SCOPE_HW_SPAN_MAX + span / 2u) / span;
+}
+
 void scope_hw_configure(uint8_t timebase, uint8_t vdiv);
 void scope_hw_configure_channels(uint8_t timebase,
                                  uint8_t ch1_vdiv,

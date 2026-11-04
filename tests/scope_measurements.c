@@ -79,14 +79,42 @@ static void test_hardware_timing(void) {
         assert(scope_slow_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 18)));
         assert(scope_soft_roll_active() == (!HW_TARGET_HW40 && tb == 18));
         assert(scope_irq_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 19)));
-        uint32_t expected = tb <= 3 ? 20u :
-            (scope_timebase_unit_ns[tb] * 2u + 2u) / 5u;
+        uint32_t span = 52428800u / scope_timebase_unit_ns[tb];
+        if (span > 0x100000u) span = 0x100000u;
+        uint32_t expected = scope_slow_roll_active() ?
+            (scope_timebase_unit_ns[tb] * 2u + 2u) / 5u :
+            (20u * 0x100000u + span / 2u) / span;
         assert(scope_sample_period_ns() == expected);
+        uint64_t screen_ns = (uint64_t)scope_timebase_unit_ns[tb] * 120u;
+        uint64_t visible = (screen_ns + expected / 2u) / expected;
+        if (visible < 2u) visible = 2u;
+        if (visible > 300u) visible = 300u;
+        assert(scope_visible_sample_count() == visible);
+        if (scope_slow_roll_active()) assert(scope_visible_sample_count() == 300u);
     }
+    ui.scope_timebase = 0;
+    assert(scope_sample_period_ns() == 20u);
+    assert(scope_visible_sample_count() == 30u);
     ui.scope_timebase = 4;
     assert(scope_sample_period_ns() == 40u);
+    assert(scope_visible_sample_count() == 300u);
     ui.scope_timebase = 5;
     assert(scope_sample_period_ns() == 80u);
+    ui.scope_timebase = 17;
+    assert(scope_sample_period_ns() == 806597u);
+    assert(scope_visible_sample_count() == 298u);
+#if HW_TARGET_HW40
+    // Truncated spans 10, 5 and 2 stretch the HW4 50MS, 100MS and 200MS captures.
+    ui.scope_timebase = 18;
+    assert(scope_sample_period_ns() == 2097152u);
+    assert(scope_visible_sample_count() == 286u);
+    ui.scope_timebase = 19;
+    assert(scope_sample_period_ns() == 4194304u);
+    assert(scope_visible_sample_count() == 286u);
+    ui.scope_timebase = 20;
+    assert(scope_sample_period_ns() == 10485760u);
+    assert(scope_visible_sample_count() == 229u);
+#endif
 }
 
 static void test_frequency(void) {
@@ -104,7 +132,14 @@ static void test_frequency(void) {
         assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == expected);
     }
     ui.scope_timebase = 19;
-    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == 10u);
+    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == (HW_TARGET_HW40 ? 9u : 10u));
+#if HW_TARGET_HW40
+    // A 1 Hz square wave at 200MS spans five divisions of real time.
+    ui.scope_timebase = 20;
+    fill_square(95, 48, 96, 160);
+    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == 1u);
+    assert(scope_visible_sample_count() * 5u / 12u == 95u);
+#endif
 }
 
 static void test_mean(void) {

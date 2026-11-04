@@ -214,8 +214,6 @@ static uint32_t scope_span_for_timebase(uint8_t timebase) {
         10000000u, 20000000u, 50000000u, 100000000u, 200000000u,
         500000000u, 1000000000u,
     };
-    uint32_t ns;
-    uint32_t span;
 
     if (timebase >= (uint8_t)(sizeof(timebase_unit_ns) / sizeof(timebase_unit_ns[0]))) {
         timebase = 4;
@@ -223,12 +221,7 @@ static uint32_t scope_span_for_timebase(uint8_t timebase) {
     if (timebase >= SCOPE_HW_SLOW_TIMEBASE_START) {
         return 0x80000u;
     }
-    ns = timebase_unit_ns[timebase];
-    span = 52428800u / ns;
-    if (span > 0x100000u) {
-        span = 0x100000u;
-    }
-    return span;
+    return scope_hw_span_for_unit_ns(timebase_unit_ns[timebase]);
 }
 
 static uint16_t scope_slow_interval_ms_for_timebase(uint8_t timebase) {
