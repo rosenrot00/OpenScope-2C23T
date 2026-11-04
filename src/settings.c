@@ -608,7 +608,6 @@ static uint8_t settings_state_record_valid(uint32_t record, settings_state_t *se
         return 0;
     }
 
-    settings_clamp(settings);
     return 1;
 }
 
