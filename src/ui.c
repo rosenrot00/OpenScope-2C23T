@@ -203,14 +203,11 @@ enum {
     SCOPE_SAMPLE_BYTES = SCOPE_SAMPLE_COUNT * 2,
     SCOPE_SAMPLES_PER_DIV = 25,
     SCOPE_VISIBLE_SAMPLE_COUNT = SCOPE_X_DIVS * SCOPE_SAMPLES_PER_DIV,
-    SCOPE_FAST_HW_SAMPLE_NS = 20,
 #if HW_TARGET_HW40
-    SCOPE_FAST_HW_TIMEBASE_MAX = 5,
     SCOPE_SOFT_ROLL_TIMEBASE = 255,
     SCOPE_IRQ_ROLL_TIMEBASE_START = 21,
     SCOPE_SLOW_ROLL_TIMEBASE_START = 21,
 #else
-    SCOPE_FAST_HW_TIMEBASE_MAX = 3,
     SCOPE_SOFT_ROLL_TIMEBASE = 18,
     SCOPE_IRQ_ROLL_TIMEBASE_START = 19,
     SCOPE_SLOW_ROLL_TIMEBASE_START = SCOPE_SOFT_ROLL_TIMEBASE,
@@ -2838,19 +2835,24 @@ static void draw_scope_measure_param_row(uint16_t x, uint16_t y) {
 
 static uint16_t scope_visible_sample_count(void) {
     uint8_t timebase = scope_safe_timebase();
+    uint32_t screen_ns;
+    uint32_t sample_ns;
+    uint32_t count;
 
-    if (timebase <= SCOPE_FAST_HW_TIMEBASE_MAX) {
-        uint32_t screen_ns = scope_timebase_unit_ns[timebase] * SCOPE_X_DIVS * 10u;
-        uint32_t count = (screen_ns + SCOPE_FAST_HW_SAMPLE_NS / 2u) / SCOPE_FAST_HW_SAMPLE_NS;
-        if (count < 2u) {
-            count = 2u;
-        }
-        if (count > SCOPE_VISIBLE_SAMPLE_COUNT) {
-            count = SCOPE_VISIBLE_SAMPLE_COUNT;
-        }
-        return (uint16_t)count;
+    if (timebase >= SCOPE_SLOW_ROLL_TIMEBASE_START) {
+        return SCOPE_VISIBLE_SAMPLE_COUNT;
     }
-    return SCOPE_VISIBLE_SAMPLE_COUNT;
+    // Capture timebases stay within 2.4 s per screen, so this fits in 32 bits.
+    screen_ns = scope_timebase_unit_ns[timebase] * SCOPE_X_DIVS * 10u;
+    sample_ns = scope_sample_period_ns();
+    count = (screen_ns + sample_ns / 2u) / sample_ns;
+    if (count < 2u) {
+        count = 2u;
+    }
+    if (count > SCOPE_VISIBLE_SAMPLE_COUNT) {
+        count = SCOPE_VISIBLE_SAMPLE_COUNT;
+    }
+    return (uint16_t)count;
 }
 
 static int32_t scope_h_pos_sample_offset(void) {
@@ -4908,13 +4910,13 @@ static uint32_t scope_timebase_unit_ns_value(void) {
 }
 
 static uint32_t scope_sample_period_ns(void) {
-    if (scope_safe_timebase() <= SCOPE_FAST_HW_TIMEBASE_MAX) {
-        return SCOPE_FAST_HW_SAMPLE_NS;
-    }
-
     uint32_t unit_ns = scope_timebase_unit_ns_value();
 
-    return (unit_ns * 2u + 2u) / 5u;
+    if (scope_safe_timebase() >= SCOPE_SLOW_ROLL_TIMEBASE_START) {
+        return (unit_ns * 2u + 2u) / 5u;
+    }
+    // The FPGA span is truncated, so slow captures take fewer than 25 samples per division.
+    return scope_hw_sample_period_ns(unit_ns);
 }
 
 static uint32_t scope_vdiv_mv_for_channel(uint8_t idx) {
