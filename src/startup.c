@@ -88,7 +88,13 @@ void Reset_Handler(void) {
         "ldr r0, =0x40010814\n"
         "movs r1, #0x01\n"
         "str r1, [r0]\n"
+        // Scope/FFT use the FPU; do not depend on the bootloader enabling it.
+        "ldr r0, =0xe000ed88\n"
+        "ldr r1, [r0]\n"
+        "orr r1, r1, #0x00f00000\n"
+        "str r1, [r0]\n"
         "dsb\n"
+        "isb\n"
         "b Reset_Handler_C\n"
     );
 }
