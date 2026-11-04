@@ -994,8 +994,7 @@ static uint8_t raw_fat_scan_screenshot_dir_sector(const raw_fat_volume_t *fat,
                                                   uint32_t dir_lba,
                                                   uint32_t *free_byte_addr,
                                                   uint8_t *have_free,
-                                                  uint16_t *max_index,
-                                                  uint8_t *have_max) {
+                                                  uint8_t *used) {
     uint8_t *sector = msc_root_shadow;
 
     if (!raw_fat_read_sector(fat, dir_lba, sector)) {
@@ -1015,22 +1014,38 @@ static uint8_t raw_fat_scan_screenshot_dir_sector(const raw_fat_volume_t *fat,
             }
             continue;
         }
-        if (raw_screenshot_entry_index(entry, &index) &&
-            (!*have_max || index > *max_index)) {
-            *have_max = 1;
-            *max_index = index;
+        if (raw_screenshot_entry_index(entry, &index)) {
+            used[index / 8u] |= (uint8_t)(1u << (index % 8u));
         }
     }
     return 1;
+}
+
+static uint16_t raw_screenshot_next_index(const uint8_t *used) {
+    uint16_t index = 99u;
+
+    while (index && !(used[index / 8u] & (1u << (index % 8u)))) {
+        --index;
+    }
+    if (index < 99u) {
+        return (uint16_t)(index + 1u);
+    }
+    // IMG_99 exists: reuse the lowest free number instead of duplicating one.
+    for (index = 1u; index < 99u; ++index) {
+        if (!(used[index / 8u] & (1u << (index % 8u)))) {
+            return index;
+        }
+    }
+    return 0;
 }
 
 static uint8_t raw_fat_find_screenshot_dir_entry(const raw_fat_volume_t *fat,
                                                  uint32_t *dir_byte_addr,
                                                  uint16_t *next_index) {
     uint8_t have_free = 0;
-    uint8_t have_max = 0;
-    uint16_t max_index = 0;
+    uint8_t used[13];
 
+    buf_zero(used, sizeof(used));
     if (fat->type == FAT_TYPE_32) {
         uint32_t cluster = fat->root_cluster;
         uint16_t guard = 0;
@@ -1039,13 +1054,13 @@ static uint8_t raw_fat_find_screenshot_dir_entry(const raw_fat_volume_t *fat,
             uint32_t lba = raw_fat_cluster_lba(fat, cluster);
             for (uint8_t i = 0; i < fat->sectors_per_cluster; ++i) {
                 uint8_t res = raw_fat_scan_screenshot_dir_sector(
-                    fat, lba + i, dir_byte_addr, &have_free, &max_index, &have_max);
+                    fat, lba + i, dir_byte_addr, &have_free, used);
                 if (!res) {
                     return 0;
                 }
                 if (res == 2u) {
-                    *next_index = have_max && max_index < 99u ? (uint16_t)(max_index + 1u) : 1u;
-                    return have_free;
+                    *next_index = raw_screenshot_next_index(used);
+                    return have_free && *next_index;
                 }
             }
             if (!raw_fat_next_cluster(fat, cluster, &cluster)) {
@@ -1055,7 +1070,7 @@ static uint8_t raw_fat_find_screenshot_dir_entry(const raw_fat_volume_t *fat,
     } else {
         for (uint32_t i = 0; i < fat->root_dir_sectors; ++i) {
             uint8_t res = raw_fat_scan_screenshot_dir_sector(
-                fat, fat->root_lba + i, dir_byte_addr, &have_free, &max_index, &have_max);
+                fat, fat->root_lba + i, dir_byte_addr, &have_free, used);
             if (!res) {
                 return 0;
             }
@@ -1065,8 +1080,8 @@ static uint8_t raw_fat_find_screenshot_dir_entry(const raw_fat_volume_t *fat,
         }
     }
 
-    *next_index = have_max && max_index < 99u ? (uint16_t)(max_index + 1u) : 1u;
-    return have_free;
+    *next_index = raw_screenshot_next_index(used);
+    return have_free && *next_index;
 }
 
 static uint8_t raw_fat_write_screenshot_chain(const raw_fat_volume_t *fat,
