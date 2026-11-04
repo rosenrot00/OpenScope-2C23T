@@ -75,7 +75,7 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/dmm-old $(BUILD_ROOT)/tests/dmm-hw4 \
                   $(BUILD_ROOT)/tests/scope_window-old $(BUILD_ROOT)/tests/scope_window-hw4 \
                   $(BUILD_ROOT)/tests/scope_measurements-old $(BUILD_ROOT)/tests/scope_measurements-hw4 \
-                  $(BUILD_ROOT)/tests/fft \
+                  $(BUILD_ROOT)/tests/fft $(BUILD_ROOT)/tests/settings \
                   $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4 \
                   $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4
 
@@ -95,6 +95,7 @@ test: $(HOST_TEST_BINS)
 	$(BUILD_ROOT)/tests/scope_measurements-old
 	$(BUILD_ROOT)/tests/scope_measurements-hw4
 	$(BUILD_ROOT)/tests/fft
+	$(BUILD_ROOT)/tests/settings
 	$(BUILD_ROOT)/tests/generator-old
 	$(BUILD_ROOT)/tests/generator-hw4
 	$(BUILD_ROOT)/tests/fpga_timing-old
@@ -129,6 +130,10 @@ $(BUILD_ROOT)/tests/%-hw4: tests/%.c src/ui.c src/settings.h src/fft.h
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=1 $< $(HOST_TEST_LINK) -o $@
 
 $(BUILD_ROOT)/tests/fft: tests/fft.c src/fft.c src/fft.h
+	@mkdir -p $(dir $@)
+	$(CLANG) $(HOST_TEST_FLAGS) $< $(HOST_TEST_LINK) -o $@
+
+$(BUILD_ROOT)/tests/settings: tests/settings.c src/settings.c src/settings.h src/hw.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) $< $(HOST_TEST_LINK) -o $@
 

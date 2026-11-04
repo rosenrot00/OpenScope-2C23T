@@ -279,6 +279,22 @@ static void test_waveform_bounds(void) {
     siggen_set_arb_waveform(0, 0);
 }
 
+static void test_sweep_units(void) {
+    setup();
+    ui_settings.siggen_sweep_start_hz = 50000;
+    ui_settings.siggen_sweep_stop_hz = 500;
+    sweep_start_unit = sweep_stop_unit = 0;
+    ui_apply_saved_runtime_settings();
+    assert(sweep_start_unit == 1 && freq_clamp_display(siggen_sweep_start_hz, sweep_start_unit) == 50);
+    assert(sweep_stop_unit == 0 && freq_clamp_display(siggen_sweep_stop_hz, sweep_stop_unit) == 500);
+    ui_settings.siggen_sweep_start_hz = 9999;
+    ui_settings.siggen_sweep_stop_hz = 2000000;
+    ui_apply_saved_runtime_settings();
+    assert(sweep_start_unit == 0 && sweep_stop_unit == 1);
+    assert(freq_clamp_display(siggen_sweep_stop_hz, sweep_stop_unit) == 2000);
+    siggen_shutdown();
+}
+
 static void test_settings_export(void) {
     ui.overlay = UI_OVERLAY_SETTINGS;
     ui.settings_row = SETTINGS_BOOT_EXPORT_ROW;
@@ -311,6 +327,7 @@ int main(void) {
     test_deferred_uploads();
     test_bode_ownership();
     test_waveform_bounds();
+    test_sweep_units();
     test_settings_export();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership and waveforms passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;

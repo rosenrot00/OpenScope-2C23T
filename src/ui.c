@@ -936,15 +936,18 @@ static void gen_freq_step_editor_unit(int8_t dir) {
     gen_freq_set_editor_value(value);
 }
 
+static void freq_sync_display_unit(uint8_t *unit, uint32_t hz) {
+    if (*unit >= GEN_FREQ_UNIT_COUNT) {
+        *unit = 0;
+    }
+    while (*unit + 1u < GEN_FREQ_UNIT_COUNT &&
+           hz > (uint32_t)gen_freq_unit_max_value(*unit) * gen_freq_unit_multiplier(*unit)) {
+        ++*unit;
+    }
+}
+
 static void gen_freq_sync_editor_unit(void) {
-    if (gen_freq_unit >= GEN_FREQ_UNIT_COUNT) {
-        gen_freq_unit = 0;
-    }
-    while (gen_freq_unit + 1u < GEN_FREQ_UNIT_COUNT &&
-           ui.gen_freq_hz > (uint32_t)gen_freq_unit_max_value(gen_freq_unit) *
-                            gen_freq_unit_multiplier(gen_freq_unit)) {
-        ++gen_freq_unit;
-    }
+    freq_sync_display_unit(&gen_freq_unit, ui.gen_freq_hz);
 }
 
 static void format_gen_freq_digits(char out[5]) {
@@ -8433,6 +8436,11 @@ static void ui_apply_saved_runtime_settings(void) {
     gen_sweep_ms = (uint16_t)ui_settings.siggen_sweep_ms;
     siggen_sweep_start_hz = ui_settings.siggen_sweep_start_hz;
     siggen_sweep_stop_hz = ui_settings.siggen_sweep_stop_hz;
+    // Sweep units are not stored; pick the smallest unit that fits.
+    sweep_start_unit = 0;
+    sweep_stop_unit = 0;
+    freq_sync_display_unit(&sweep_start_unit, siggen_sweep_start_hz);
+    freq_sync_display_unit(&sweep_stop_unit, siggen_sweep_stop_hz);
     gen_fm_mode = ui_settings.siggen_fm_mode;
     gen_fm_source = ui_settings.siggen_fm_source;
     gen_fm_freq_hz = ui_settings.siggen_fm_freq_hz;
