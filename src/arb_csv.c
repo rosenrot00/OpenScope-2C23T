@@ -1,4 +1,5 @@
 #include "arb_csv.h"
+#include "usb_msc.h"
 #include "w25q.h"
 
 #include <stdint.h>
@@ -308,6 +309,7 @@ done:
 
 uint8_t arb_scan_files(void) {
     uint8_t i;
+    uint8_t ok;
 
     for (i = 0; i < ARB_MAX_FILES; ++i) {
         files[i].name[0] = 0;
@@ -318,10 +320,13 @@ uint8_t arb_scan_files(void) {
     file_count = 0;
     scanned = 0;
 
-    if (!mount()) {
+    // Retry on the next call while the USB host is writing.
+    if (!usb_msc_storage_begin()) {
         return 0;
     }
-    if (!scan_root()) {
+    ok = mount() && scan_root();
+    usb_msc_storage_end();
+    if (!ok) {
         return 0;
     }
     scanned = 1;
@@ -346,9 +351,11 @@ uint16_t arb_file_sample_count(uint8_t index) {
     if (index >= file_count) {
         return 0;
     }
-    if (files[index].sample_count == 0 && files[index].start_cluster != 0) {
+    if (files[index].sample_count == 0 && files[index].start_cluster != 0 &&
+        usb_msc_storage_begin()) {
         files[index].sample_count = stream_csv_values(files[index].start_cluster,
                                                        files[index].file_size, 0, 2048);
+        usb_msc_storage_end();
     }
     return files[index].sample_count;
 }
@@ -359,12 +366,13 @@ uint8_t arb_load_file(uint8_t index, uint8_t *buffer, uint16_t max) {
     if (index >= file_count) {
         return 0;
     }
-    if (files[index].start_cluster == 0) {
+    if (files[index].start_cluster == 0 || !usb_msc_storage_begin()) {
         return 0;
     }
 
     parsed = stream_csv_values(files[index].start_cluster, files[index].file_size,
                                 buffer, max);
+    usb_msc_storage_end();
     files[index].sample_count = parsed;
     return parsed > 0 ? 1u : 0u;
 }
