@@ -7661,6 +7661,9 @@ void ui_init(void) {
     scope_hide_traces = ui_settings.scope_hide_traces;
     bode_start_hz = ui_settings.bode_start_hz;
     bode_stop_hz = ui_settings.bode_stop_hz;
+    // Bode units are not stored; pick the smallest unit that fits.
+    freq_sync_display_unit(&bode_start_unit, bode_start_hz);
+    freq_sync_display_unit(&bode_stop_unit, bode_stop_hz);
     bode_steps = bode_clamp_steps(ui_settings.bode_steps);
     ui.dmm_mode = dmm_sanitize_mode(ui_settings.dmm_mode);
     if (start_mode == UI_MODE_DMM) {
@@ -10187,6 +10190,8 @@ void ui_handle_keys(uint32_t events) {
             scope_hide_traces = ui_settings.scope_hide_traces;
             bode_start_hz = ui_settings.bode_start_hz;
             bode_stop_hz = ui_settings.bode_stop_hz;
+            freq_sync_display_unit(&bode_start_unit, bode_start_hz);
+            freq_sync_display_unit(&bode_stop_unit, bode_stop_hz);
             bode_steps = bode_clamp_steps(ui_settings.bode_steps);
             if (scope_fft_src == 3) {
                 ui.scope_display = SCOPE_DISPLAY_XY; 

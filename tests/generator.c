@@ -50,6 +50,8 @@ void scope_hw_configure_channels(uint8_t tb, uint8_t r0, uint8_t r1,
     fpga_write_scope_timing(50000u + tb);
 }
 void scope_hw_arm(void) {}
+void scope_hw_set_offsets(uint16_t ch1_dac, uint16_t ch2_dac) { (void)ch1_dac; (void)ch2_dac; }
+uint8_t usb_msc_store_screenshot(void) { return 0; }
 void scope_hw_slow_start(uint8_t timebase) { (void)timebase; }
 void scope_hw_slow_stop(void) {}
 uint8_t scope_hw_enabled(void) { return 1; }
@@ -295,6 +297,22 @@ static void test_sweep_units(void) {
     siggen_shutdown();
 }
 
+static void test_bode_units(void) {
+    setup();
+    ui.mode = UI_MODE_SCOPE;
+    ui_math_menu_visible = 0;
+    ui_settings.bode_start_hz = 100;
+    ui_settings.bode_stop_hz = 100000;
+    bode_start_unit = bode_stop_unit = 0;
+    ui_handle_keys(KEY_CH1_LONG);
+    assert(ui_math_menu_visible);
+    assert(bode_start_unit == 0 && freq_clamp_display(bode_start_hz, bode_start_unit) == 100);
+    assert(bode_stop_unit == 1 && freq_clamp_display(bode_stop_hz, bode_stop_unit) == 100);
+    ui_math_menu_visible = 0;
+    ui.mode = UI_MODE_GEN;
+    siggen_shutdown();
+}
+
 static void test_settings_export(void) {
     ui.overlay = UI_OVERLAY_SETTINGS;
     ui.settings_row = SETTINGS_BOOT_EXPORT_ROW;
@@ -328,6 +346,7 @@ int main(void) {
     test_bode_ownership();
     test_waveform_bounds();
     test_sweep_units();
+    test_bode_units();
     test_settings_export();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership and waveforms passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
