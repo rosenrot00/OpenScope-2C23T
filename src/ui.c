@@ -4899,13 +4899,10 @@ static uint32_t scope_timebase_unit_ns_value(void) {
 }
 
 static uint32_t scope_sample_period_ns(void) {
-    if (scope_safe_timebase() <= SCOPE_FAST_HW_TIMEBASE_MAX) {
-        return SCOPE_FAST_HW_SAMPLE_NS;
-    }
+    // HW4 1US/2US keep the fast read alignment, but the capture span is already decimated.
+    uint32_t sample_ns = (scope_timebase_unit_ns_value() * 2u + 2u) / 5u;
 
-    uint32_t unit_ns = scope_timebase_unit_ns_value();
-
-    return (unit_ns * 2u + 2u) / 5u;
+    return sample_ns < SCOPE_FAST_HW_SAMPLE_NS ? SCOPE_FAST_HW_SAMPLE_NS : sample_ns;
 }
 
 static uint32_t scope_vdiv_mv_for_channel(uint8_t idx) {

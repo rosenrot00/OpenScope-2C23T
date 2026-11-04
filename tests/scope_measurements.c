@@ -79,10 +79,14 @@ static void test_hardware_timing(void) {
         assert(scope_slow_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 18)));
         assert(scope_soft_roll_active() == (!HW_TARGET_HW40 && tb == 18));
         assert(scope_irq_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 19)));
-        uint32_t expected = tb <= (HW_TARGET_HW40 ? 5 : 3) ? 20u :
+        uint32_t expected = tb <= 3 ? 20u :
             (scope_timebase_unit_ns[tb] * 2u + 2u) / 5u;
         assert(scope_sample_period_ns() == expected);
     }
+    ui.scope_timebase = 4;
+    assert(scope_sample_period_ns() == 40u);
+    ui.scope_timebase = 5;
+    assert(scope_sample_period_ns() == 80u);
 }
 
 static void test_frequency(void) {
