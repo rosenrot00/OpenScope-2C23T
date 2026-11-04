@@ -29,6 +29,14 @@ void scope_hw_configure_channels(uint8_t timebase, uint8_t range0, uint8_t range
     configured_coupling[1] = dc1;
 }
 
+void compute_fft_bin(const float *input_real, uint16_t count, uint8_t window_type, uint16_t bin,
+                     float *out_magnitude, float *out_phase_rad) {
+    (void)input_real; (void)window_type; (void)bin;
+    assert(count >= 2 && count <= FFT_SIZE);
+    *out_magnitude = 1.0f;
+    *out_phase_rad = 0.0f;
+}
+
 void lcd_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
     (void)x0; (void)x1;
     if (color == RGB565(255, 0, 255)) {
@@ -205,6 +213,17 @@ static void test_bode_limits(void) {
         bode_current_step = 254;
         ui_draw_bode(10, 25, 300, 150);
     }
+    bode_is_sweeping = 0;
+    // Bode steps must never select a roll timebase, which leaves scope_samples stale.
+    for (uint32_t freq = 10; freq <= SETTINGS_SIGGEN_MAX_FREQ_HZ; freq += freq < 1000 ? 1u : 997u) {
+        assert(bode_auto_timebase(freq) < SCOPE_SLOW_ROLL_TIMEBASE_START);
+    }
+    assert(bode_auto_timebase(10) == (HW_TARGET_HW40 ? 18 : 17) && bode_auto_timebase(13) == 17);
+    bode_step_freq_hz = 10;
+    ui.scope_timebase = 17;
+    assert(bode_measure_step(0));
+    ui.scope_timebase = SCOPE_SLOW_ROLL_TIMEBASE_START;
+    assert(!bode_measure_step(0));
 }
 
 static void test_auto_clipped(void) {

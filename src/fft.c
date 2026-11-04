@@ -86,18 +86,46 @@ static uint8_t fft_bit_reverse(uint8_t index) {
     return rev;
 }
 
-static void fft_compute_complex(const float *input_real, uint8_t window_type, complex_t *data) {
+// Sum of the symmetric window over count points.
+static float fft_window_gain(uint8_t window_type, uint16_t count) {
+    if (window_type == 0) {
+        return 0.5f * (float)(count - 1u);
+    }
+    if (window_type == 1) {
+        return 0.54f * (float)count - 0.46f;
+    }
+    if (window_type == 2) {
+        return 0.42f * (float)count - 0.42f;
+    }
+    return (float)count;
+}
+
+static void fft_compute_complex(const float *input_real, uint16_t count, uint8_t window_type,
+                                complex_t *data) {
+    float scale;
+
+    if (count < 2u || count > FFT_SIZE) {
+        count = FFT_SIZE;
+    }
+    // Window only the real samples and keep amplitudes comparable to a full record.
+    scale = fft_window_gain(window_type, FFT_SIZE) / fft_window_gain(window_type, count);
+
     for (int i = 0; i < FFT_SIZE; i++) {
         uint8_t rev_idx = fft_bit_reverse((uint8_t)i);
-        float w = 1.0f;
-        float angle = (2.0f * 3.14159265f * (float)i) / (float)(FFT_SIZE - 1);
+        float w = 0.0f;
 
-        if (window_type == 0) {
-            w = 0.5f * (1.0f - local_cos(angle));
-        } else if (window_type == 1) {
-            w = 0.54f - 0.46f * local_cos(angle);
-        } else if (window_type == 2) {
-            w = 0.42f - 0.5f * local_cos(angle) + 0.08f * local_cos(2.0f * angle);
+        if (i < count) {
+            float angle = (2.0f * 3.14159265f * (float)i) / (float)(count - 1u);
+
+            w = 1.0f;
+            if (window_type == 0) {
+                w = 0.5f * (1.0f - local_cos(angle));
+            } else if (window_type == 1) {
+                w = 0.54f - 0.46f * local_cos(angle);
+            } else if (window_type == 2) {
+                w = 0.42f - 0.5f * local_cos(angle) + 0.08f * local_cos(2.0f * angle);
+            }
+            w *= scale;
         }
 
         data[rev_idx].real = input_real[i] * w;
@@ -129,8 +157,9 @@ static void fft_compute_complex(const float *input_real, uint8_t window_type, co
     }
 }
 
-void compute_fft(const float *input_real, float *output_magnitude, uint8_t window_type) {
-    fft_compute_complex(input_real, window_type, fft_work);
+void compute_fft(const float *input_real, uint16_t count, float *output_magnitude,
+                 uint8_t window_type) {
+    fft_compute_complex(input_real, count, window_type, fft_work);
 
     for (int i = 0; i < FFT_SIZE / 2; i++) {
         float r = fft_work[i].real;
@@ -139,7 +168,7 @@ void compute_fft(const float *input_real, float *output_magnitude, uint8_t windo
     }
 }
 
-void compute_fft_bin(const float *input_real, uint8_t window_type, uint16_t bin,
+void compute_fft_bin(const float *input_real, uint16_t count, uint8_t window_type, uint16_t bin,
                      float *out_magnitude, float *out_phase_rad) {
     uint16_t idx;
 
@@ -153,7 +182,7 @@ void compute_fft_bin(const float *input_real, uint8_t window_type, uint16_t bin,
         return;
     }
 
-    fft_compute_complex(input_real, window_type, fft_work);
+    fft_compute_complex(input_real, count, window_type, fft_work);
 
     idx = bin;
     if (idx >= (uint16_t)(FFT_SIZE / 2)) {
