@@ -88,8 +88,8 @@ make release
 
 Output files:
 
-- `dist/F2C23T-v2026.10.1-08008000.bin`
-- `dist/F2C23T-v2026.10.1-HW4.0-08007000.bin`
+- `dist/F2C23T-v2026.11.1-08008000.bin`
+- `dist/F2C23T-v2026.11.1-HW4.0-08007000.bin`
 
 Run the host regression tests with Clang:
 
@@ -116,8 +116,8 @@ This function never erases or programs the MCU's internal flash and never change
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.10.1-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.10.1-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.11.1-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.11.1-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 To flash the firmware with the built-in bootloader:
 
