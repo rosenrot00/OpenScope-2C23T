@@ -220,6 +220,27 @@ static void test_screenshot(void) {
     for (uint32_t i = 0; i < SCREENSHOT_FILE_SIZE; ++i) expected[i] = (uint8_t)i;
     check_file(&fat, entry, expected, SCREENSHOT_FILE_SIZE);
     free(expected);
+
+    // Numbering continues after the highest index, then fills gaps once IMG_99 exists.
+    fat = setup(512, FAT_TYPE_12, 2);
+    uint8_t *root = disk + fat.root_lba * fat.bytes_per_sector;
+    static const char *const names[] = {"IMG_99  BMP", "IMG_01  BMP", "IMG_03  BMP"};
+    for (unsigned i = 0; i < 3; ++i) {
+        memcpy(root + 32u * (i + 1u), names[i], 11);
+        root[32u * (i + 1u) + 11] = 0x20;
+    }
+    assert(usb_msc_store_screenshot());
+    assert(!memcmp(root + 128, "IMG_02  BMP", 11));
+    assert(usb_msc_store_screenshot());
+    assert(!memcmp(root + 160, "IMG_04  BMP", 11));
+    uint8_t used[13];
+    memset(used, 0xFF, sizeof(used));
+    assert(!raw_screenshot_next_index(used));
+    used[50 / 8] &= (uint8_t)~(1u << (50 % 8));
+    assert(raw_screenshot_next_index(used) == 50);
+    memset(used, 0, sizeof(used));
+    used[0] = 1;
+    assert(raw_screenshot_next_index(used) == 1);
 }
 
 static void test_storage_busy(void) {
