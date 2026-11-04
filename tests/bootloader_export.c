@@ -59,6 +59,11 @@ void fw_update_status(fw_update_status_t *status) {
     memset(status, 0, sizeof(*status));
     if (update_busy) status->state = FW_UPDATE_STATE_STAGING;
 }
+void fw_update_clear(void) {}
+void fw_update_note_file(uint32_t base_lba, uint32_t size) { (void)base_lba; (void)size; }
+void fw_update_usb_data(uint32_t lba, uint16_t sector_offset, const uint8_t *data, uint16_t len) {
+    (void)lba; (void)sector_offset; (void)data; (void)len;
+}
 uint8_t screenshot_render_current(uint32_t offset, uint8_t *dst, uint16_t len) {
     for (uint16_t i = 0; i < len; ++i) dst[i] = (uint8_t)(offset + i);
     return 1;
@@ -217,6 +222,34 @@ static void test_screenshot(void) {
     free(expected);
 }
 
+static void test_storage_busy(void) {
+    raw_fat_volume_t fat = setup(512, FAT_TYPE_12, 1);
+    usb_ready = 1;
+    // A screenshot between packets of a host WRITE must not reuse its pending sector.
+    msc_state = MSC_DISCARD_OUT_DATA;
+    raw_write_lba = 7;
+    raw_write_loaded = raw_write_dirty = 1;
+    memset(raw_write_sector, 0x5A, sizeof(raw_write_sector));
+    assert(!usb_msc_store_screenshot() && !writes);
+    assert(raw_write_loaded && raw_write_dirty && raw_write_lba == 7);
+    for (uint16_t i = 0; i < sizeof(raw_write_sector); ++i) assert(raw_write_sector[i] == 0x5A);
+    assert(disk[fat.root_lba * fat.bytes_per_sector + 32] == 0);
+    assert(REG32(0xE000E180u) == 1u << 20 && REG32(NVIC_ISER0) == 1u << 20);
+    raw_update_scan_pending = 1;
+    msc_update_idle_ms = MSC_UPDATE_IDLE_APPLY_MS;
+    usb_msc_poll();
+    assert(raw_update_scan_pending);
+    msc_state = MSC_IDLE;
+    raw_write_loaded = raw_write_dirty = 0;
+    usb_msc_poll();
+    assert(!raw_update_scan_pending && !msc_update_candidate);
+    REG32(0xE000E180u) = REG32(NVIC_ISER0) = 0;
+    assert(usb_msc_store_screenshot() && writes);
+    assert(REG32(0xE000E180u) == 1u << 20 && REG32(NVIC_ISER0) == 1u << 20);
+    assert(!memcmp(disk + fat.root_lba * fat.bytes_per_sector + 32, "IMG_01  BMP", 11));
+    usb_ready = 0;
+}
+
 int main(void) {
     test_export(512, FAT_TYPE_12, 1);
     test_export(4096, FAT_TYPE_12, 2);
@@ -224,5 +257,6 @@ int main(void) {
     test_export(512, FAT_TYPE_32, 1);
     test_failures();
     test_screenshot();
+    test_storage_busy();
     puts("bootloader FAT export checks passed (" HW_TARGET_NAME ")");
 }

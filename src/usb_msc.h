@@ -17,6 +17,8 @@ typedef void (*boot_export_progress_fn_t)(uint8_t percent);
 void usb_msc_init(void);
 void usb_msc_set_enabled(uint8_t enabled);
 void usb_msc_poll(void);
+uint8_t usb_msc_storage_begin(void);
+void usb_msc_storage_end(void);
 uint8_t usb_msc_store_screenshot(void);
 boot_export_result_t usb_msc_export_bootloader(const char *version,
                                                boot_export_progress_fn_t progress);

@@ -1155,8 +1155,35 @@ static uint8_t raw_fat_save_latest_screenshot(void) {
     return 1;
 }
 
+uint8_t usb_msc_storage_begin(void) {
+    if (!usb_ready) {
+        return 1;
+    }
+    // Keep the USB IRQ off the flash and the shared sector buffer.
+    REG32(0xE000E180u) = 1u << 20;
+    // Retry later instead of splitting a SCSI transfer.
+    if (msc_state != MSC_IDLE) {
+        REG32(NVIC_ISER0) = 1u << 20;
+        return 0;
+    }
+    return 1;
+}
+
+void usb_msc_storage_end(void) {
+    if (usb_ready) {
+        REG32(NVIC_ISER0) = 1u << 20;
+    }
+}
+
 uint8_t usb_msc_store_screenshot(void) {
-    return raw_fat_save_latest_screenshot();
+    uint8_t ok;
+
+    if (!usb_msc_storage_begin()) {
+        return 0;
+    }
+    ok = raw_fat_save_latest_screenshot();
+    usb_msc_storage_end();
+    return ok;
 }
 
 static uint8_t buf_equal(const uint8_t *a, const uint8_t *b, uint16_t len) {
@@ -1964,9 +1991,13 @@ void usb_msc_poll(void) {
             ++msc_update_idle_ms;
             return;
         }
+        if (!usb_msc_storage_begin()) {
+            return;
+        }
         raw_update_scan_pending = 0;
         msc_update_idle_ms = 0;
         raw_fat_scan_and_stage_update();
+        usb_msc_storage_end();
     }
 
     if (!msc_update_candidate) {
@@ -1974,7 +2005,11 @@ void usb_msc_poll(void) {
     }
     fw_update_status(&status);
     if (status.state == FW_UPDATE_STATE_ERROR) {
+        if (!usb_msc_storage_begin()) {
+            return;
+        }
         raw_fat_delete_update_file(raw_update_dir_byte_addr);
+        usb_msc_storage_end();
         fw_update_clear();
         msc_update_candidate = 0;
         return;
@@ -1986,12 +2021,16 @@ void usb_msc_poll(void) {
     if (status.state == FW_UPDATE_STATE_READY &&
         status.expected_size >= 8192u &&
         status.bytes >= status.expected_size) {
+        if (!usb_msc_storage_begin()) {
+            return;
+        }
         if (fw_update_request_apply()) {
             raw_fat_delete_update_file(raw_update_dir_byte_addr);
         } else {
             raw_fat_delete_update_file(raw_update_dir_byte_addr);
             fw_update_clear();
         }
+        usb_msc_storage_end();
         msc_update_candidate = 0;
     }
 }
