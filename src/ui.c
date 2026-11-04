@@ -769,7 +769,7 @@ static void bode_shutdown(uint8_t restore_scope_hw);
 static void bode_apply_step_freq(void);
 static uint8_t bode_measure_step(uint8_t step);
 static void bode_sweep_service(void);
-static void bode_extract_channel(uint8_t target_ch, float *dst);
+static uint16_t bode_extract_channel(uint8_t target_ch, float *dst);
 static void scope_fft_src_apply_from(uint8_t old_src, uint8_t new_src);
 static void ui_draw_bode(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh);
 
@@ -1994,7 +1994,7 @@ static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t
         fft_input_buffer[i] -= mean;
     }
 
-    compute_fft(fft_input_buffer, fft_output_buffer, scope_fft_window);
+    compute_fft(fft_input_buffer, source_count, fft_output_buffer, scope_fft_window);
 
     uint16_t num_bins = FFT_SIZE / 2u;
     uint16_t peak_bin = 1u;
@@ -2192,13 +2192,14 @@ static uint8_t bode_auto_timebase(uint32_t freq_hz) {
         freq_hz = 1u;
     }
     min_screen_ns = 3000000000ull / freq_hz;
-    for (uint8_t i = 0; i < SCOPE_TIMEBASE_COUNT; ++i) {
+    // Roll timebases never refresh scope_samples, so stay on captured frames.
+    for (uint8_t i = 0; i < SCOPE_SLOW_ROLL_TIMEBASE_START; ++i) {
         uint64_t screen_ns = (uint64_t)scope_timebase_unit_ns[i] * SCOPE_X_DIVS * 10u;
         if (screen_ns >= min_screen_ns) {
             return i;
         }
     }
-    return (uint8_t)(SCOPE_TIMEBASE_COUNT - 1u);
+    return (uint8_t)(SCOPE_SLOW_ROLL_TIMEBASE_START - 1u);
 }
 
 static void bode_restore_generator(void) {
@@ -2301,7 +2302,7 @@ static void scope_fft_src_apply_from(uint8_t old_src, uint8_t new_src) {
     scope_trace_invalidate();
 }
 
-static void bode_extract_channel(uint8_t target_ch, float *dst) {
+static uint16_t bode_extract_channel(uint8_t target_ch, float *dst) {
     uint16_t visible_samples = scope_visible_sample_count();
     uint16_t source_count;
     uint16_t base;
@@ -2312,7 +2313,7 @@ static void bode_extract_channel(uint8_t target_ch, float *dst) {
         for (i = 0; i < FFT_SIZE; ++i) {
             dst[i] = 0.0f;
         }
-        return;
+        return 0;
     }
     if (visible_samples > SCOPE_SAMPLE_COUNT) {
         visible_samples = SCOPE_SAMPLE_COUNT;
@@ -2363,6 +2364,7 @@ static void bode_extract_channel(uint8_t target_ch, float *dst) {
             dst[i] -= mean;
         }
     }
+    return source_count;
 }
 
 static uint8_t bode_measure_step(uint8_t step) {
@@ -2374,13 +2376,17 @@ static uint8_t bode_measure_step(uint8_t step) {
     float sample_rate_hz;
     float hz_per_bin;
     uint16_t bin;
+    uint16_t source_count;
     uint16_t visible_samples = scope_visible_sample_count();
 
-    if (!scope_ch_enabled[0] || !scope_ch_enabled[1]) {
+    if (scope_slow_roll_active() || !scope_ch_enabled[0] || !scope_ch_enabled[1]) {
         return 0;
     }
 
-    bode_extract_channel(0, fft_input_buffer);
+    source_count = bode_extract_channel(0, fft_input_buffer);
+    if (!source_count) {
+        return 0;
+    }
     effective_sample_ns = (float)scope_sample_period_ns();
     if (visible_samples > FFT_SIZE) {
         effective_sample_ns *= (float)(visible_samples - 1u) / (float)(FFT_SIZE - 1u);
@@ -2395,9 +2401,9 @@ static uint8_t bode_measure_step(uint8_t step) {
         bin = (uint16_t)((FFT_SIZE / 2u) - 1u);
     }
 
-    compute_fft_bin(fft_input_buffer, scope_fft_window, bin, &mag_ch1, &phase_ch1);
+    compute_fft_bin(fft_input_buffer, source_count, scope_fft_window, bin, &mag_ch1, &phase_ch1);
     bode_extract_channel(1, fft_input_buffer);
-    compute_fft_bin(fft_input_buffer, scope_fft_window, bin, &mag_ch2, &phase_ch2);
+    compute_fft_bin(fft_input_buffer, source_count, scope_fft_window, bin, &mag_ch2, &phase_ch2);
 
     if (mag_ch1 <= 0.0f || mag_ch2 <= 0.0f) {
         return 0;
