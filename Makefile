@@ -22,6 +22,8 @@ LLD_DIR := $(BUILD)/lld
 CFLAGS := \
 	-target armv7em-none-eabi \
 	-mcpu=cortex-m4 \
+	-mfpu=fpv4-sp-d16 \
+	-mfloat-abi=softfp \
 	-mthumb \
 	-ffreestanding \
 	-fno-builtin \
@@ -48,6 +50,8 @@ CFLAGS := \
 LDFLAGS := \
 	-target armv7em-none-eabi \
 	-mcpu=cortex-m4 \
+	-mfpu=fpv4-sp-d16 \
+	-mfloat-abi=softfp \
 	-mthumb \
 	-nostdlib \
 	-fuse-ld=lld \
