@@ -1820,32 +1820,63 @@ static void ep1_in(void) {
     }
 }
 
-enum { CDC_TX_BUF_SIZE = 256 };
+enum { CDC_TX_BUF_SIZE = 2048 };
 static uint8_t cdc_tx_buf[CDC_TX_BUF_SIZE];
 static volatile uint16_t cdc_tx_head;
 static volatile uint16_t cdc_tx_tail;
 static volatile uint8_t cdc_tx_busy;
 
-
 void ui_set_dmm_mode(uint8_t mode);
+void ui_set_main_mode(uint8_t mode);
+void ui_scope_set_running(uint8_t run);
+void ui_scope_trigger_auto(void);
+void ui_scope_step_timebase(int8_t dir);
+void ui_scope_step_vdiv(uint8_t ch, int8_t dir);
 
 static void handle_cdc_rx_command(const char *cmd) {
     if (!cmd) return;
     if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
         const char *m = cmd + 5;
-        if (m[0] == 'A' && m[1] == 'U' && m[2] == 'T') ui_set_dmm_mode(0);
-        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(1);
-        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(2);
-        else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
-        else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
-        else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
-        else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
-        else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
-        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
-        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
-        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(11);
-        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
-        else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
+        if (m[0] == 'S' && m[1] == 'C' && m[2] == 'O' && m[3] == 'P' && m[4] == 'E') {
+            ui_set_main_mode(1);
+        } else if (m[0] == 'D' && m[1] == 'M' && m[2] == 'M') {
+            ui_set_main_mode(0);
+        } else if (m[0] == 'G' && m[1] == 'E' && m[2] == 'N') {
+            ui_set_main_mode(2);
+        } else {
+            ui_set_main_mode(0);
+            if (m[0] == 'A' && m[1] == 'U' && m[2] == 'T') ui_set_dmm_mode(0);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(1);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(2);
+            else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
+            else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
+            else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
+            else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
+            else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(11);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
+            else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
+        }
+    } else if (cmd[0] == 'S' && cmd[1] == 'C' && cmd[2] == 'O' && cmd[3] == 'P' && cmd[4] == 'E' && cmd[5] == ':') {
+        const char *s = cmd + 6;
+        if (s[0] == 'R' && s[1] == 'U' && s[2] == 'N') {
+            ui_scope_set_running(1);
+        } else if (s[0] == 'S' && s[1] == 'T' && s[2] == 'O' && s[3] == 'P') {
+            ui_scope_set_running(0);
+        } else if (s[0] == 'A' && s[1] == 'U' && s[2] == 'T' && s[3] == 'O') {
+            ui_scope_trigger_auto();
+        } else if (s[0] == 'T' && s[1] == 'B' && s[2] == ':') {
+            if (s[3] == '+') ui_scope_step_timebase(1);
+            else if (s[3] == '-') ui_scope_step_timebase(-1);
+        } else if (s[0] == 'C' && s[1] == 'H' && s[2] == '1' && s[3] == ':') {
+            if (s[4] == '+') ui_scope_step_vdiv(0, 1);
+            else if (s[4] == '-') ui_scope_step_vdiv(0, -1);
+        } else if (s[0] == 'C' && s[1] == 'H' && s[2] == '2' && s[3] == ':') {
+            if (s[4] == '+') ui_scope_step_vdiv(1, 1);
+            else if (s[4] == '-') ui_scope_step_vdiv(1, -1);
+        }
     }
 }
 

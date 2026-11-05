@@ -7525,6 +7525,13 @@ static void ui_switch_mode(ui_mode_t mode) {
         dmm_pause();
         dmm_hw4_set_mode_gate(0);
     }
+        if (mode == UI_MODE_SCOPE) {
+        usb_cdc_send_bytes((const uint8_t *)"$MODE,SCOPE\r\n", 13);
+    } else if (mode == UI_MODE_DMM) {
+        usb_cdc_send_bytes((const uint8_t *)"$MODE,DMM\r\n", 11);
+    } else if (mode == UI_MODE_GEN) {
+        usb_cdc_send_bytes((const uint8_t *)"$MODE,GEN\r\n", 11);
+    }
     ui.mode = mode;
     ui.overlay = UI_OVERLAY_NONE;
     ui.chrome_visible = 0;
@@ -10589,6 +10596,120 @@ void ui_set_load_sample(uint32_t active_ticks, uint32_t idle_ticks) {
     }
 }
 
+static void scope_stream_telemetry(uint32_t elapsed_ms) {
+    static uint32_t scope_stream_acc_ms = 0;
+    if (!usb_cdc_is_configured() || ui.mode != UI_MODE_SCOPE) {
+        scope_stream_acc_ms = 0;
+        return;
+    }
+
+    scope_stream_acc_ms += elapsed_ms;
+    if (scope_stream_acc_ms < 66u) {
+        return;
+    }
+    scope_stream_acc_ms = 0;
+
+    // 1. Meta packet: $SCOPE,<tb>,<v1>,<v2>,<f1>,<vpp1>,<f2>,<vpp2>,<run>,<ch1_en>,<ch2_en>\r\n
+    char meta[128];
+    uint16_t mpos = 0;
+    const char *p = "$SCOPE,";
+    while (*p) meta[mpos++] = *p++;
+
+    const char *tb = scope_timebase_chip_label();
+    while (*tb) meta[mpos++] = *tb++;
+    meta[mpos++] = ',';
+
+    const char *v1 = scope_vdiv_chip_label_for_channel(0);
+    while (*v1) meta[mpos++] = *v1++;
+    meta[mpos++] = ',';
+
+    const char *v2 = scope_vdiv_chip_label_for_channel(1);
+    while (*v2) meta[mpos++] = *v2++;
+    meta[mpos++] = ',';
+
+    char num_buf[16];
+    uint32_t f1 = scope_ch_enabled[0] ? scope_filtered_freq_hz(0) : 0;
+    uint8_t min0 = scope_filtered_min_raw(0);
+    uint8_t max0 = scope_filtered_max_raw(0);
+    uint32_t vpp1 = (scope_ch_enabled[0] && max0 >= min0) ?
+                    (uint32_t)scope_raw_span_mv(0, (uint8_t)(max0 - min0)) : 0;
+
+    scope_format_u32(num_buf, f1);
+    p = num_buf;
+    while (*p) meta[mpos++] = *p++;
+    meta[mpos++] = ',';
+
+    scope_format_u32(num_buf, vpp1);
+    p = num_buf;
+    while (*p) meta[mpos++] = *p++;
+    meta[mpos++] = ',';
+
+    uint32_t f2 = scope_ch_enabled[1] ? scope_filtered_freq_hz(1) : 0;
+    uint8_t min1 = scope_filtered_min_raw(1);
+    uint8_t max1 = scope_filtered_max_raw(1);
+    uint32_t vpp2 = (scope_ch_enabled[1] && max1 >= min1) ?
+                    (uint32_t)scope_raw_span_mv(1, (uint8_t)(max1 - min1)) : 0;
+
+    scope_format_u32(num_buf, f2);
+    p = num_buf;
+    while (*p) meta[mpos++] = *p++;
+    meta[mpos++] = ',';
+
+    scope_format_u32(num_buf, vpp2);
+    p = num_buf;
+    while (*p) meta[mpos++] = *p++;
+    meta[mpos++] = ',';
+
+    meta[mpos++] = ui.running ? '1' : '0';
+    meta[mpos++] = ',';
+    meta[mpos++] = scope_ch_enabled[0] ? '1' : '0';
+    meta[mpos++] = ',';
+    meta[mpos++] = scope_ch_enabled[1] ? '1' : '0';
+    meta[mpos++] = '\r';
+    meta[mpos++] = '\n';
+
+    usb_cdc_send_bytes((const uint8_t *)meta, mpos);
+
+    // 2. Waveforms
+    static const char hex_digits[] = "0123456789ABCDEF";
+    enum { SCOPE_STREAM_POINTS = 180 };
+    static char wave_buf[8 + SCOPE_STREAM_POINTS * 2 + 3];
+
+    for (uint8_t ch = 0; ch < 2u; ++ch) {
+        if (!scope_ch_enabled[ch]) continue;
+
+        uint16_t wpos = 0;
+        wave_buf[wpos++] = '$';
+        wave_buf[wpos++] = 'W';
+        wave_buf[wpos++] = 'A';
+        wave_buf[wpos++] = 'V';
+        wave_buf[wpos++] = 'E';
+        wave_buf[wpos++] = ',';
+        wave_buf[wpos++] = (char)('1' + ch);
+        wave_buf[wpos++] = ',';
+
+        uint8_t slow_roll = scope_slow_roll_active();
+        uint16_t r_count = scope_slow_roll_count;
+
+        for (uint16_t i = 0; i < SCOPE_STREAM_POINTS; ++i) {
+            uint8_t sample;
+            if (slow_roll) {
+                uint16_t roll_idx = (r_count > 1u) ? (uint16_t)((uint32_t)i * (r_count - 1u) / (SCOPE_STREAM_POINTS - 1u)) : 0;
+                sample = scope_slow_roll_raw_at(ch, roll_idx);
+            } else {
+                sample = scope_display_sample_raw(i, ch, SCOPE_STREAM_POINTS - 1u);
+            }
+            wave_buf[wpos++] = hex_digits[(sample >> 4) & 0x0F];
+            wave_buf[wpos++] = hex_digits[sample & 0x0F];
+        }
+
+        wave_buf[wpos++] = '\r';
+        wave_buf[wpos++] = '\n';
+
+        usb_cdc_send_bytes((const uint8_t *)wave_buf, wpos);
+    }
+}
+
 void ui_tick(uint32_t elapsed_ms) {
     uint8_t rendered = 0;
     uint8_t battery_changed = 0;
@@ -10772,6 +10893,10 @@ void ui_tick(uint32_t elapsed_ms) {
         scope_frame_age_ms = 0;
     }
 
+        if (ui.mode == UI_MODE_SCOPE) {
+        scope_stream_telemetry(elapsed_ms);
+    }
+
     if (!ui.chrome_visible) {
         return;
     }
@@ -10797,5 +10922,50 @@ void ui_set_dmm_mode(uint8_t mode) {
         ui_render_local_change();
         extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
         usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
+    }
+}
+
+void ui_set_main_mode(uint8_t mode) {
+    if (mode >= 3u) mode = 0;
+    if (ui.mode != mode) {
+        ui_direct_mode(mode);
+    }
+}
+
+void ui_scope_set_running(uint8_t run) {
+    if (ui.mode == UI_MODE_SCOPE) {
+        ui.running = run ? 1u : 0u;
+        ui_render_mode_content();
+    }
+}
+
+void ui_scope_trigger_auto(void) {
+    if (ui.mode == UI_MODE_SCOPE) {
+        uint8_t mask = (uint8_t)((scope_ch_enabled[0] ? 0x01u : 0u) |
+                                 (scope_ch_enabled[1] ? 0x02u : 0u));
+        if (!mask) {
+            mask = (uint8_t)(ui.active_ch == 2u ? 0x02u : 0x01u);
+        }
+        scope_auto_setup_request(mask);
+    }
+}
+
+void ui_scope_step_timebase(int8_t dir) {
+    if (ui.mode == UI_MODE_SCOPE) {
+        scope_step_timebase(dir);
+        ui_render_mode_content();
+    }
+}
+
+void ui_scope_step_vdiv(uint8_t ch, int8_t dir) {
+    if (ui.mode == UI_MODE_SCOPE && ch < 2u) {
+        cycle_u8(&scope_vdiv_ch[ch], SCOPE_VDIV_COUNT, dir);
+        scope_auto_channel_mask = 0;
+        scope_auto_channel_steps_left = 0;
+        scope_auto_channel_second_pass = 0;
+        ui.scope_vdiv = scope_safe_vdiv();
+        scope_cursor_level_sync_screen();
+        scope_apply_settings();
+        ui_render_mode_content();
     }
 }
