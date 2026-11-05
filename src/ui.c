@@ -503,24 +503,24 @@ enum {
     SCOPE_CURSOR_COUNT,
 };
 
-static const uint16_t C_BG = RGB565(5, 9, 14);
-static const uint16_t C_TOP = RGB565(12, 18, 24);
-static const uint16_t C_PANEL = RGB565(16, 25, 34);
-static const uint16_t C_PANEL_2 = RGB565(22, 34, 45);
-static const uint16_t C_GRID = RGB565(39, 53, 63);
-static const uint16_t C_TEXT = RGB565(232, 240, 246);
-static const uint16_t C_MUTED = RGB565(126, 144, 154);
-static const uint16_t C_WARN = RGB565(238, 74, 80);
-static const uint16_t C_CH1 = RGB565(245, 197, 66);
-static const uint16_t C_CH2 = RGB565(48, 206, 230);
-static const uint16_t C_DMM = RGB565(43, 202, 134);
-static const uint16_t C_SCOPE = RGB565(116, 154, 255);
-static const uint16_t C_GEN = RGB565(178, 118, 255);
-static const uint16_t C_MENU_SCOPE = RGB565(180, 202, 220);
-static const uint16_t C_MENU_GEN = RGB565(190, 118, 255);
-static const uint16_t C_MENU_SETTINGS = RGB565(255, 126, 92);
-static const uint16_t C_BATT = RGB565(232, 240, 246);
-static const uint16_t C_BATT_FULL = RGB565(232, 240, 246);
+static const uint16_t C_BG = RGB565(2, 4, 8);
+static const uint16_t C_TOP = RGB565(8, 14, 22);
+static const uint16_t C_PANEL = RGB565(14, 22, 32);
+static const uint16_t C_PANEL_2 = RGB565(20, 30, 44);
+static const uint16_t C_GRID = RGB565(26, 36, 48);
+static const uint16_t C_TEXT = RGB565(250, 252, 255);
+static const uint16_t C_MUTED = RGB565(148, 163, 184);
+static const uint16_t C_WARN = RGB565(244, 63, 94);
+static const uint16_t C_CH1 = RGB565(250, 204, 21);
+static const uint16_t C_CH2 = RGB565(0, 242, 254);
+static const uint16_t C_DMM = RGB565(52, 211, 153);
+static const uint16_t C_SCOPE = RGB565(56, 189, 248);
+static const uint16_t C_GEN = RGB565(192, 132, 252);
+static const uint16_t C_MENU_SCOPE = RGB565(56, 189, 248);
+static const uint16_t C_MENU_GEN = RGB565(192, 132, 252);
+static const uint16_t C_MENU_SETTINGS = RGB565(251, 146, 60);
+static const uint16_t C_BATT = RGB565(52, 211, 153);
+static const uint16_t C_BATT_FULL = RGB565(52, 211, 153);
 
 enum {
     DMM_MODE_AUTO,
@@ -6175,7 +6175,7 @@ static void draw_scope_chrome_live(void) {
     uint16_t gy = 55;
     uint16_t gw = 300;
     uint16_t gh = 124;
-    uint16_t grid_bg = RGB565(6, 12, 16);
+    uint16_t grid_bg = RGB565(2, 4, 8);
 
 #if SCOPE_UI_SAFE_STUB
     scope_sanitize_state();
@@ -6637,7 +6637,7 @@ static int16_t gen_wave_preview_y(uint16_t point, uint16_t width, int16_t center
 }
 
 static void draw_gen_wave_preview(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bg) {
-    uint16_t grid_bg = RGB565(6, 12, 18);
+    uint16_t grid_bg = RGB565(2, 4, 8);
     uint16_t center_y = (uint16_t)(y + h / 2u);
     uint16_t plot_x0 = (uint16_t)(x + 8u);
     uint16_t plot_w = (uint16_t)(w - 16u);
