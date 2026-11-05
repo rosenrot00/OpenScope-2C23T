@@ -957,6 +957,18 @@ const char *dmm_unit_text(void) {
     return dmm_unit;
 }
 
+
+const char *dmm_mode_name(void) {
+    static const char *const names[] = {
+        "AUTO", "DCV", "ACV", "RES", "DIODE", "CAP", "LIVE",
+        "CONT", "TEMP", "ACA", "DCA", "ACMA", "DCMA"
+    };
+    if (dmm_current_mode < 13u) {
+        return names[dmm_current_mode];
+    }
+    return "DCV";
+}
+
 const char *dmm_status_text(void) {
     return dmm_valid && !dmm_synthetic_valid ? "LIVE" : dmm_status;
 }

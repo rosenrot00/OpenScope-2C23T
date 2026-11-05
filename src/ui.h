@@ -13,3 +13,4 @@ uint8_t ui_auto_sleep_due(void);
 uint8_t ui_diode_beep_enabled(void);
 uint8_t ui_live_beep_enabled(void);
 void ui_set_live_wire_detected(uint8_t detected);
+void ui_set_dmm_mode(uint8_t mode);

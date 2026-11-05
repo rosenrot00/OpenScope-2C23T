@@ -1826,6 +1826,29 @@ static volatile uint16_t cdc_tx_head;
 static volatile uint16_t cdc_tx_tail;
 static volatile uint8_t cdc_tx_busy;
 
+
+void ui_set_dmm_mode(uint8_t mode);
+
+static void handle_cdc_rx_command(const char *cmd) {
+    if (!cmd) return;
+    if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
+        const char *m = cmd + 5;
+        if (m[0] == 'A' && m[1] == 'U' && m[2] == 'T') ui_set_dmm_mode(0);
+        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(1);
+        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(2);
+        else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
+        else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
+        else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
+        else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
+        else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
+        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
+        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
+        else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(11);
+        else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
+        else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
+    }
+}
+
 static void cdc_pump_tx(void) {
     if (!usb_configured || cdc_tx_busy) {
         return;
@@ -2221,6 +2244,13 @@ void USB_LP_CAN1_RX0_IRQHandler(void) {
                 }
             } else if (ep == 3) {
                 if (reg & USB_EP_CTR_RX) {
+                    uint16_t rx_len = pma_get_rx_count(3);
+                    uint8_t cmd_buf[32];
+                    if (rx_len > 0 && rx_len < sizeof(cmd_buf)) {
+                        pma_read(USB_EP3_RX, cmd_buf, rx_len);
+                        cmd_buf[rx_len] = 0;
+                        handle_cdc_rx_command((const char *)cmd_buf);
+                    }
                     ep_clear_rx_ctr(3);
                     ep_set_rx_stat(3, USB_STAT_VALID);
                 }

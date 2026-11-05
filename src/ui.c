@@ -10785,3 +10785,13 @@ void ui_tick(uint32_t elapsed_ms) {
         ui.idle_ms = (uint16_t)next;
     }
 }
+
+void ui_set_dmm_mode(uint8_t mode) {
+    if (mode < DMM_MODE_COUNT) {
+        ui.dmm_mode = mode;
+        dmm_set_mode(mode);
+        dmm_stats_reset();
+        ui_settings.dmm_mode = mode;
+        ui_render_local_change();
+    }
+}
