@@ -23,3 +23,8 @@ uint8_t usb_msc_store_screenshot(void);
 boot_export_result_t usb_msc_export_bootloader(const char *version,
                                                boot_export_progress_fn_t progress);
 void USB_LP_CAN1_RX0_IRQHandler(void);
+
+// USB CDC Virtual COM Port additions
+void usb_cdc_send_bytes(const uint8_t *data, uint16_t len);
+void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
+uint8_t usb_cdc_is_configured(void);
