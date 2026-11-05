@@ -194,6 +194,7 @@ int main(void) {
         if (dmm_poll()) {
             dmm_beep_service(0);
             ui_dmm_measurement_updated();
+            usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
         }
         uint32_t events = input_pressed_events();
         if (events && !input_settle_ms) {

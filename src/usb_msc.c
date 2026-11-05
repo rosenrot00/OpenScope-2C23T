@@ -13,10 +13,15 @@
 enum {
     USB_EP0_SIZE = 64,
     USB_EP1_SIZE = 64,
+    USB_EP2_SIZE = 16,
+    USB_EP3_SIZE = 64,
     USB_EP0_TX = 0x0040,
     USB_EP0_RX = 0x0080,
     USB_EP1_TX = 0x00C0,
     USB_EP1_RX = 0x0100,
+    USB_EP2_TX = 0x0140,
+    USB_EP3_TX = 0x0160,
+    USB_EP3_RX = 0x01A0,
 
     USB_ISTR_CTR = 0x8000,
     USB_ISTR_RESET = 0x0400,
@@ -47,6 +52,8 @@ enum {
 
     USB_EP_TYPE_BULK = 0x0000,
     USB_EP_TYPE_CONTROL = 0x0200,
+    USB_EP_TYPE_ISO = 0x0400,
+    USB_EP_TYPE_INTERRUPT = 0x0600,
     USB_STAT_DISABLED = 0,
     USB_STAT_STALL = 1,
     USB_STAT_NAK = 2,
@@ -68,6 +75,7 @@ enum UsbEp0State {
     EP0_TX_DATA,
     EP0_TX_STATUS,
     EP0_WAIT_OUT_STATUS,
+    EP0_RX_DATA,
 };
 
 enum MscState {
@@ -79,15 +87,25 @@ enum MscState {
 };
 
 static const uint8_t usb_device_desc[] = {
-    18, 1, 0x00, 0x02, 0x00, 0x00, 0x00, USB_EP0_SIZE,
+    18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, USB_EP0_SIZE,
     0x3C, 0x2E, 0x20, 0x57, 0x00, 0x02, 1, 2, 3, 1,
 };
 
 static const uint8_t usb_config_desc[] = {
-    9, 2, 32, 0, 1, 1, 0, 0x80, 50,
+    9, 2, 98, 0, 3, 1, 0, 0x80, 50,
     9, 4, 0, 0, 2, 0x08, 0x06, 0x50, 0,
     7, 5, 0x81, 0x02, USB_EP1_SIZE, 0, 0,
     7, 5, 0x01, 0x02, USB_EP1_SIZE, 0, 0,
+    8, 0x0B, 1, 2, 0x02, 0x02, 0x01, 0,
+    9, 4, 1, 0, 1, 0x02, 0x02, 0x01, 0,
+    5, 0x24, 0x00, 0x10, 0x01,
+    5, 0x24, 0x01, 0x00, 2,
+    4, 0x24, 0x02, 0x02,
+    5, 0x24, 0x06, 1, 2,
+    7, 5, 0x82, 0x03, USB_EP2_SIZE, 0, 16,
+    9, 4, 2, 0, 2, 0x0A, 0x00, 0x00, 0,
+    7, 5, 0x83, 0x02, USB_EP3_SIZE, 0, 0,
+    7, 5, 0x03, 0x02, USB_EP3_SIZE, 0, 0,
 };
 
 static const uint8_t usb_lang_desc[] = {4, 3, 0x09, 0x04};
@@ -1802,6 +1820,129 @@ static void ep1_in(void) {
     }
 }
 
+enum { CDC_TX_BUF_SIZE = 2048 };
+static uint8_t cdc_tx_buf[CDC_TX_BUF_SIZE];
+static volatile uint16_t cdc_tx_head;
+static volatile uint16_t cdc_tx_tail;
+static volatile uint8_t cdc_tx_busy;
+
+void ui_set_dmm_mode(uint8_t mode);
+void ui_set_main_mode(uint8_t mode);
+void ui_scope_set_running(uint8_t run);
+void ui_scope_trigger_auto(void);
+void ui_scope_step_timebase(int8_t dir);
+void ui_scope_step_vdiv(uint8_t ch, int8_t dir);
+
+static void handle_cdc_rx_command(const char *cmd) {
+    if (!cmd) return;
+    if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
+        const char *m = cmd + 5;
+        if (m[0] == 'S' && m[1] == 'C' && m[2] == 'O' && m[3] == 'P' && m[4] == 'E') {
+            ui_set_main_mode(1);
+        } else if (m[0] == 'D' && m[1] == 'M' && m[2] == 'M') {
+            ui_set_main_mode(0);
+        } else if (m[0] == 'G' && m[1] == 'E' && m[2] == 'N') {
+            ui_set_main_mode(2);
+        } else {
+            ui_set_main_mode(0);
+            if (m[0] == 'A' && m[1] == 'U' && m[2] == 'T') ui_set_dmm_mode(0);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(1);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(2);
+            else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
+            else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
+            else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
+            else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
+            else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(11);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
+            else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
+        }
+    } else if (cmd[0] == 'S' && cmd[1] == 'C' && cmd[2] == 'O' && cmd[3] == 'P' && cmd[4] == 'E' && cmd[5] == ':') {
+        const char *s = cmd + 6;
+        if (s[0] == 'R' && s[1] == 'U' && s[2] == 'N') {
+            ui_scope_set_running(1);
+        } else if (s[0] == 'S' && s[1] == 'T' && s[2] == 'O' && s[3] == 'P') {
+            ui_scope_set_running(0);
+        } else if (s[0] == 'A' && s[1] == 'U' && s[2] == 'T' && s[3] == 'O') {
+            ui_scope_trigger_auto();
+        } else if (s[0] == 'T' && s[1] == 'B' && s[2] == ':') {
+            if (s[3] == '+') ui_scope_step_timebase(1);
+            else if (s[3] == '-') ui_scope_step_timebase(-1);
+        } else if (s[0] == 'C' && s[1] == 'H' && s[2] == '1' && s[3] == ':') {
+            if (s[4] == '+') ui_scope_step_vdiv(0, 1);
+            else if (s[4] == '-') ui_scope_step_vdiv(0, -1);
+        } else if (s[0] == 'C' && s[1] == 'H' && s[2] == '2' && s[3] == ':') {
+            if (s[4] == '+') ui_scope_step_vdiv(1, 1);
+            else if (s[4] == '-') ui_scope_step_vdiv(1, -1);
+        }
+    }
+}
+
+static void cdc_pump_tx(void) {
+    if (!usb_configured || cdc_tx_busy) {
+        return;
+    }
+    if (cdc_tx_head == cdc_tx_tail) {
+        return;
+    }
+    uint8_t packet[USB_EP3_SIZE];
+    uint16_t count = 0;
+    while (cdc_tx_tail != cdc_tx_head && count < USB_EP3_SIZE) {
+        packet[count++] = cdc_tx_buf[cdc_tx_tail];
+        cdc_tx_tail = (uint16_t)((cdc_tx_tail + 1u) % CDC_TX_BUF_SIZE);
+    }
+    if (count > 0) {
+        cdc_tx_busy = 1;
+        pma_write(USB_EP3_TX, packet, count);
+        pma_set_tx(3, USB_EP3_TX, count);
+        ep_set_tx_stat(3, USB_STAT_VALID);
+    }
+}
+
+static void cdc_tx_complete(void) {
+    cdc_tx_busy = 0;
+    cdc_pump_tx();
+}
+
+void usb_cdc_send_bytes(const uint8_t *data, uint16_t len) {
+    for (uint16_t i = 0; i < len; ++i) {
+        uint16_t next = (uint16_t)((cdc_tx_head + 1u) % CDC_TX_BUF_SIZE);
+        if (next == cdc_tx_tail) {
+            cdc_tx_tail = (uint16_t)((cdc_tx_tail + 1u) % CDC_TX_BUF_SIZE);
+        }
+        cdc_tx_buf[cdc_tx_head] = data[i];
+        cdc_tx_head = next;
+    }
+    cdc_pump_tx();
+}
+
+void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid) {
+    char buf[64];
+    uint16_t pos = 0;
+    const char *prefix = "$DMM,";
+    const char *status_str = valid ? "OK" : "HOLD";
+
+    while (*prefix) buf[pos++] = *prefix++;
+    while (*mode) buf[pos++] = *mode++;
+    buf[pos++] = ',';
+    while (*val) buf[pos++] = *val++;
+    buf[pos++] = ',';
+    while (*unit) buf[pos++] = *unit++;
+    buf[pos++] = ',';
+    while (*status_str) buf[pos++] = *status_str++;
+    buf[pos++] = '\r';
+    buf[pos++] = '\n';
+
+    usb_cdc_send_bytes((const uint8_t *)buf, pos);
+}
+
+uint8_t usb_cdc_is_configured(void) {
+    return usb_configured;
+}
+
+
 static void usb_handle_setup(const uint8_t *setup) {
     uint8_t bm = setup[0];
     uint8_t req = setup[1];
@@ -1816,6 +1957,19 @@ static void usb_handle_setup(const uint8_t *setup) {
             ep0_send(msc_small, 1, len);
         } else if (req == 0xFF) {
             msc_state = MSC_IDLE;
+            ep0_send_zlp();
+        } else if (req == 0x20) {
+            if (len > 0) {
+                ep0_state = EP0_RX_DATA;
+                ep_set_rx_stat(0, USB_STAT_VALID);
+                ep_set_tx_stat(0, USB_STAT_NAK);
+            } else {
+                ep0_send_zlp();
+            }
+        } else if (req == 0x21) {
+            static const uint8_t line_coding[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
+            ep0_send(line_coding, 7, len);
+        } else if (req == 0x22 || req == 0x23) {
             ep0_send_zlp();
         } else {
             ep0_stall();
@@ -1859,6 +2013,16 @@ static void usb_handle_setup(const uint8_t *setup) {
         ep_set_tx_stat(1, USB_STAT_NAK);
         ep_set_rx_stat(1, USB_STAT_VALID);
         msc_state = MSC_IDLE;
+        ep_set_type(2, USB_EP_TYPE_INTERRUPT);
+        pma_set_tx(2, USB_EP2_TX, 0);
+        ep_set_tx_stat(2, USB_STAT_NAK);
+        ep_set_rx_stat(2, USB_STAT_DISABLED);
+        ep_set_type(3, USB_EP_TYPE_BULK);
+        pma_set_tx(3, USB_EP3_TX, 0);
+        pma_set_rx(3, USB_EP3_RX, USB_EP3_SIZE);
+        ep_set_tx_stat(3, USB_STAT_NAK);
+        ep_set_rx_stat(3, USB_STAT_VALID);
+        cdc_tx_busy = 0;
         ep0_send_zlp();
         break;
     case 0x08:
@@ -1891,7 +2055,12 @@ static void ep0_rx(void) {
         usb_handle_setup(setup);
     } else {
         ep_clear_rx_ctr(0);
-        ep_set_rx_stat(0, USB_STAT_VALID);
+        if (ep0_state == EP0_RX_DATA) {
+            ep0_state = EP0_IDLE;
+            ep0_send_zlp();
+        } else {
+            ep_set_rx_stat(0, USB_STAT_VALID);
+        }
     }
 }
 
@@ -1925,11 +2094,26 @@ static void usb_reset_core(void) {
     ep_set_tx_stat(1, USB_STAT_NAK);
     ep_set_rx_stat(1, USB_STAT_NAK);
 
+    ep_set_type(2, USB_EP_TYPE_INTERRUPT);
+    pma_set_tx(2, USB_EP2_TX, 0);
+    ep_set_tx_stat(2, USB_STAT_NAK);
+    ep_set_rx_stat(2, USB_STAT_DISABLED);
+
+    ep_set_type(3, USB_EP_TYPE_BULK);
+    pma_set_tx(3, USB_EP3_TX, 0);
+    pma_set_rx(3, USB_EP3_RX, USB_EP3_SIZE);
+    ep_set_tx_stat(3, USB_STAT_NAK);
+    ep_set_rx_stat(3, USB_STAT_NAK);
+
     ep0_state = EP0_IDLE;
     ep0_address_pending = 0;
     usb_configured = 0;
     msc_state = MSC_IDLE;
     msc_set_sense(0, 0);
+
+    cdc_tx_head = 0;
+    cdc_tx_tail = 0;
+    cdc_tx_busy = 0;
 }
 
 void usb_msc_init(void) {
@@ -2083,6 +2267,27 @@ void USB_LP_CAN1_RX0_IRQHandler(void) {
                 }
                 if (USB_EPR(1) & USB_EP_CTR_TX) {
                     ep1_in();
+                }
+            } else if (ep == 2) {
+                if (reg & USB_EP_CTR_TX) {
+                    ep_clear_tx_ctr(2);
+                    ep_set_tx_stat(2, USB_STAT_NAK);
+                }
+            } else if (ep == 3) {
+                if (reg & USB_EP_CTR_RX) {
+                    uint16_t rx_len = pma_get_rx_count(3);
+                    uint8_t cmd_buf[32];
+                    if (rx_len > 0 && rx_len < sizeof(cmd_buf)) {
+                        pma_read(USB_EP3_RX, cmd_buf, rx_len);
+                        cmd_buf[rx_len] = 0;
+                        handle_cdc_rx_command((const char *)cmd_buf);
+                    }
+                    ep_clear_rx_ctr(3);
+                    ep_set_rx_stat(3, USB_STAT_VALID);
+                }
+                if (USB_EPR(3) & USB_EP_CTR_TX) {
+                    ep_clear_tx_ctr(3);
+                    cdc_tx_complete();
                 }
             } else {
                 if (reg & USB_EP_CTR_RX) {

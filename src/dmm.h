@@ -19,6 +19,7 @@ int32_t dmm_value_fixed_units(void);
 const char *dmm_value_text(void);
 const char *dmm_unit_text(void);
 const char *dmm_status_text(void);
+const char *dmm_mode_name(void);
 uint8_t dmm_reading_is_real(void);
 uint8_t dmm_live_wire_active(void);
 uint8_t dmm_diode_continuity_active(void);
