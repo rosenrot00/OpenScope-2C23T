@@ -7891,6 +7891,8 @@ static void dmm_apply_selected_mode(void) {
     if (dmm_mode_uses_real_reading()) {
         dmm_set_mode(ui.dmm_mode);
     }
+    extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
+    usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
 }
 
 void ui_note_runtime_settings(void) {
@@ -10793,5 +10795,7 @@ void ui_set_dmm_mode(uint8_t mode) {
         dmm_stats_reset();
         ui_settings.dmm_mode = mode;
         ui_render_local_change();
+        extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
+        usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
     }
 }

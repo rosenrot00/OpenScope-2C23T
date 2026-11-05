@@ -405,10 +405,16 @@ static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char 
         } else {
             text_copy(out, "A", 6);
         }
-    } else if (kind == 'C' || kind == 'D') {
+    } else if (kind == 'C') {
         text_copy(out, "DEG", 6);
+    } else if (kind == 'D') {
+        text_copy(out, "V", 6);
     } else {
-        text_copy(out, "", 6);
+        if (dmm_current_mode == 4u) {
+            text_copy(out, "V", 6);
+        } else {
+            text_copy(out, "", 6);
+        }
     }
 }
 
@@ -520,7 +526,7 @@ static uint8_t dmm_reading_compatible(const char *value, const char *unit, uint8
         return unit_is_resistance(unit);
     }
     if (dmm_current_mode == 4u) {
-        return unit_is_voltage(unit) || unit_is_resistance(unit);
+        return unit_is_voltage(unit) || unit_is_resistance(unit) || text_equal(unit, "DEG") || !unit[0];
     }
     if (dmm_current_mode == 5u) {
         return unit_is_capacitance(unit);
@@ -657,7 +663,7 @@ static uint8_t parse_frame(const uint8_t frame[DMM_FRAME_LEN]) {
     }
     new_numeric = parse_fixed_units(new_value, &new_fixed);
     if (new_numeric) {
-        if (!new_unit[0] && dmm_current_mode != 6u) {
+        if (!new_unit[0] && dmm_current_mode != 6u && dmm_current_mode != 4u) {
             return 0;
         }
     } else if (!text_equal(new_value, "AUTO") && !text_equal(new_value, "OPEN") &&
