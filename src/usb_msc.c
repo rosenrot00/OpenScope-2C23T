@@ -75,6 +75,7 @@ enum UsbEp0State {
     EP0_TX_DATA,
     EP0_TX_STATUS,
     EP0_WAIT_OUT_STATUS,
+    EP0_RX_DATA,
 };
 
 enum MscState {
@@ -1904,11 +1905,17 @@ static void usb_handle_setup(const uint8_t *setup) {
             msc_state = MSC_IDLE;
             ep0_send_zlp();
         } else if (req == 0x20) {
-            ep0_send_zlp();
+            if (len > 0) {
+                ep0_state = EP0_RX_DATA;
+                ep_set_rx_stat(0, USB_STAT_VALID);
+                ep_set_tx_stat(0, USB_STAT_NAK);
+            } else {
+                ep0_send_zlp();
+            }
         } else if (req == 0x21) {
             static const uint8_t line_coding[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
             ep0_send(line_coding, 7, len);
-        } else if (req == 0x22) {
+        } else if (req == 0x22 || req == 0x23) {
             ep0_send_zlp();
         } else {
             ep0_stall();
@@ -1994,7 +2001,12 @@ static void ep0_rx(void) {
         usb_handle_setup(setup);
     } else {
         ep_clear_rx_ctr(0);
-        ep_set_rx_stat(0, USB_STAT_VALID);
+        if (ep0_state == EP0_RX_DATA) {
+            ep0_state = EP0_IDLE;
+            ep0_send_zlp();
+        } else {
+            ep_set_rx_stat(0, USB_STAT_VALID);
+        }
     }
 }
 
