@@ -405,10 +405,8 @@ static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char 
         } else {
             text_copy(out, "A", 6);
         }
-    } else if (kind == 'C') {
+    } else if (kind == 'C' || kind == 'D') {
         text_copy(out, "DEG", 6);
-    } else if (kind == 'D') {
-        text_copy(out, "V", 6);
     } else {
         if (dmm_current_mode == 4u) {
             text_copy(out, "V", 6);
@@ -526,7 +524,7 @@ static uint8_t dmm_reading_compatible(const char *value, const char *unit, uint8
         return unit_is_resistance(unit);
     }
     if (dmm_current_mode == 4u) {
-        return unit_is_voltage(unit) || unit_is_resistance(unit) || text_equal(unit, "DEG") || !unit[0];
+        return unit_is_voltage(unit) || unit_is_resistance(unit) || !unit[0];
     }
     if (dmm_current_mode == 5u) {
         return unit_is_capacitance(unit);

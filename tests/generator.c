@@ -52,6 +52,12 @@ void scope_hw_configure_channels(uint8_t tb, uint8_t r0, uint8_t r1,
 void scope_hw_arm(void) {}
 void scope_hw_set_offsets(uint16_t ch1_dac, uint16_t ch2_dac) { (void)ch1_dac; (void)ch2_dac; }
 uint8_t usb_msc_store_screenshot(void) { return 0; }
+uint8_t usb_cdc_is_configured(void) { return 0; }
+void usb_cdc_send_bytes(const uint8_t *data, uint16_t len) { (void)data; (void)len; }
+void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid) {
+    (void)mode; (void)val; (void)unit; (void)valid;
+}
+const char *dmm_mode_name(void) { return "DCV"; }
 void scope_hw_slow_start(uint8_t timebase) { (void)timebase; }
 void scope_hw_slow_stop(void) {}
 uint8_t scope_hw_enabled(void) { return 1; }
