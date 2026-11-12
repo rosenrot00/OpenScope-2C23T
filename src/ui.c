@@ -10672,7 +10672,13 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
 
     // 2. Waveforms
     static const char hex_digits[] = "0123456789ABCDEF";
-    enum { SCOPE_STREAM_POINTS = 180 };
+    // Stream every point the screen shows, so the PC measures on the same data
+    // the device does. At 180 the trace was decimated from these 300 samples,
+    // which cost precision on peaks (a 3318 mV span read as 2698 mV) and forced
+    // the PC to recompute what the device already measured.
+    // Cost: 610 bytes per channel per frame, ~19 kB/s with both channels at
+    // 15 frames/s -- about a third of what USB CDC carries.
+    enum { SCOPE_STREAM_POINTS = SCOPE_VISIBLE_SAMPLE_COUNT };
     static char wave_buf[8 + SCOPE_STREAM_POINTS * 2 + 3];
 
     for (uint8_t ch = 0; ch < 2u; ++ch) {
