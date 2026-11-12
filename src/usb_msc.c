@@ -1832,9 +1832,117 @@ void ui_scope_set_running(uint8_t run);
 void ui_scope_trigger_auto(void);
 void ui_scope_step_timebase(int8_t dir);
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir);
+void ui_gen_set_output(uint8_t run);
+void ui_gen_set_frequency(uint32_t hz);
+void ui_gen_set_wave(uint8_t wave);
+void ui_gen_set_amplitude(uint8_t tenths_v);
+void ui_gen_set_duty(uint8_t duty_percent);
+uint8_t ui_gen_is_running(void);
+uint32_t ui_gen_frequency(void);
+uint8_t ui_gen_wave(void);
+uint8_t ui_gen_amplitude(void);
+
+// Returns the text after `prefix`, or 0 when `cmd` does not start with it.
+static const char *cdc_match_prefix(const char *cmd, const char *prefix) {
+    while (*prefix) {
+        if (*cmd != *prefix) {
+            return 0;
+        }
+        ++cmd;
+        ++prefix;
+    }
+    return cmd;
+}
+
+// Parses a decimal value; returns 0 when no digit is present.
+static uint8_t cdc_parse_u32(const char *text, uint32_t *out) {
+    uint32_t value = 0;
+    uint8_t digits = 0;
+
+    while (*text >= '0' && *text <= '9') {
+        if (value > 429496729u) {
+            return 0;
+        }
+        value = value * 10u + (uint32_t)(*text - '0');
+        ++text;
+        ++digits;
+    }
+    if (!digits) {
+        return 0;
+    }
+    *out = value;
+    return 1;
+}
+
+static uint16_t cdc_append_u32(char *dst, uint16_t pos, uint32_t value) {
+    char digits[10];
+    uint8_t count = 0;
+
+    if (!value) {
+        dst[pos++] = '0';
+        return pos;
+    }
+    while (value && count < 10u) {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+    while (count) {
+        dst[pos++] = digits[--count];
+    }
+    return pos;
+}
+
+static void cdc_send_gen_state(void) {
+    char buf[48];
+    uint16_t pos = 0;
+    const char *prefix = "$GEN,";
+
+    while (*prefix) buf[pos++] = *prefix++;
+    pos = cdc_append_u32(buf, pos, ui_gen_is_running());
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, ui_gen_frequency());
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, ui_gen_wave());
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, ui_gen_amplitude());
+    buf[pos++] = '\r';
+    buf[pos++] = '\n';
+
+    usb_cdc_send_bytes((const uint8_t *)buf, pos);
+}
+
+// Handles GEN:* commands. Returns 1 when the command was consumed.
+static uint8_t handle_cdc_gen_command(const char *cmd) {
+    const char *arg;
+    uint32_t value;
+
+    arg = cdc_match_prefix(cmd, "GEN:");
+    if (!arg) {
+        return 0;
+    }
+    if (cdc_match_prefix(arg, "RUN")) {
+        ui_gen_set_output(1);
+    } else if (cdc_match_prefix(arg, "STOP")) {
+        ui_gen_set_output(0);
+    } else if (cdc_match_prefix(arg, "?")) {
+        cdc_send_gen_state();
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:FREQ:")) != 0) {
+        if (cdc_parse_u32(arg, &value)) ui_gen_set_frequency(value);
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:WAVE:")) != 0) {
+        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_wave((uint8_t)value);
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:AMP:")) != 0) {
+        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_amplitude((uint8_t)value);
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:DUTY:")) != 0) {
+        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_duty((uint8_t)value);
+    } else {
+        return 0;
+    }
+    return 1;
+}
 
 static void handle_cdc_rx_command(const char *cmd) {
     if (!cmd) return;
+    if (handle_cdc_gen_command(cmd)) return;
     if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
         const char *m = cmd + 5;
         if (m[0] == 'S' && m[1] == 'C' && m[2] == 'O' && m[3] == 'P' && m[4] == 'E') {
