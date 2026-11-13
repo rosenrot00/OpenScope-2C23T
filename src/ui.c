@@ -7370,10 +7370,13 @@ static void draw_settings_tile(uint8_t row, uint16_t x, uint16_t y, uint16_t w, 
         // belongs on this unit, and how much of the drive is left.
         char storage[20];
         settings_storage_text(storage);
+        // Laid out left to right rather than centred: a centred revision
+        // would run into a version string one character longer.
         lcd_text((uint16_t)(x + 8u), (uint16_t)(y + 22u), FIRMWARE_VERSION_TEXT, C_TEXT, bg, 2);
-        lcd_text_center(x, (uint16_t)(y + 26u), w, hardware_revision_text(), C_TEXT, bg, 2);
+        lcd_text((uint16_t)(x + 150u), (uint16_t)(y + 22u), hardware_revision_text(),
+                 menu_item_color(3), bg, 2);
         lcd_text((uint16_t)(x + w - 8u - lcd_text_width(storage, 1)),
-                 (uint16_t)(y + 28u), storage, C_MUTED, bg, 1);
+                 (uint16_t)(y + 26u), storage, C_MUTED, bg, 1);
         return;
     }
     lcd_text_center(x, value_y, w, value_text, value_color, bg, value_scale);
