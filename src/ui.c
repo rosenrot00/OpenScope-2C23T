@@ -7392,7 +7392,30 @@ typedef enum {
 
 static ui_render_job_t current_render_job;
 
+// The renderer only pushes to the glass the rectangles something drew
+// into, which is what keeps it fast. The cost is that a screen drawing
+// less than the one before it leaves the difference behind: switching
+// modes could show the scope's title over the multimeter's reading over
+// the scope's bottom bar, all at once. These two say when a full render
+// is a different screen from the last one and so has to start from a
+// clean background.
+static uint8_t last_full_scene_key = 0xFF;
+static uint8_t full_scene_clear;
+
+static uint8_t full_scene_key(void) {
+    // The overlays paint their own background over everything, so they
+    // need no clear of their own -- but they do make the next mode screen
+    // need one, which is why they take a key at all.
+    if (ui.overlay != UI_OVERLAY_NONE) {
+        return (uint8_t)(0x80u | (uint8_t)ui.overlay);
+    }
+    return (uint8_t)(((uint8_t)ui.mode << 1) | (ui.chrome_visible ? 1u : 0u));
+}
+
 static void ui_draw_full_scene(void) {
+    if (full_scene_clear) {
+        lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+    }
     if (!ui.chrome_visible) {
         if (ui.mode == UI_MODE_SCOPE) {
             draw_scope_immersive();
@@ -7555,6 +7578,17 @@ static void ui_render_dispatch(void *ctx) {
 static void ui_render_job(ui_render_job_t job) {
     uint32_t start = load_counter_read();
     current_render_job = job;
+    // Decided before the render and held for its duration: lcd_render()
+    // runs the callback twice, once to collect the rectangles and once to
+    // fill them, and the two passes have to agree on what they are drawing.
+    full_scene_clear = 0;
+    if (job == UI_RENDER_FULL) {
+        uint8_t key = full_scene_key();
+        if (key != last_full_scene_key) {
+            full_scene_clear = 1;
+            last_full_scene_key = key;
+        }
+    }
     lcd_render(ui_render_dispatch, 0);
     ui_last_render_ticks = load_counter_elapsed(start, load_counter_read());
     if (job == UI_RENDER_FULL || job == UI_RENDER_BATTERY ||

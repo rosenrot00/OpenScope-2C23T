@@ -398,6 +398,51 @@ static void test_generator_resumes_after_dmm(void) {
     assert_zero_output();
 }
 
+// Only the rectangles something drew into reach the glass, so a screen
+// that draws less than the one before it used to leave the difference
+// behind -- three modes at once in a capture taken mid-switch. A full
+// render of a different screen has to start from a clean background; one
+// of the same screen must not, or every frame would flicker.
+static void test_full_render_clears_on_scene_change(void) {
+    ui.overlay = UI_OVERLAY_NONE;
+    ui.chrome_visible = 1;
+    ui.mode = UI_MODE_DMM;
+    last_full_scene_key = 0xFF;
+
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);            // first render of this screen
+    ui_render_job(UI_RENDER_FULL);
+    assert(!full_scene_clear);           // same screen again: no clear
+
+    ui.mode = UI_MODE_SCOPE;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+    ui_render_job(UI_RENDER_FULL);
+    assert(!full_scene_clear);
+
+    // The immersive layout covers different ground from the framed one.
+    ui.chrome_visible = 0;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+    ui.chrome_visible = 1;
+
+    // An overlay paints its own background, and leaves the mode screen
+    // underneath it owing a clear when it comes back.
+    ui_render_job(UI_RENDER_FULL);
+    ui.overlay = UI_OVERLAY_SETTINGS;
+    ui_render_job(UI_RENDER_FULL);
+    ui.overlay = UI_OVERLAY_NONE;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+
+    // A partial render cannot repay the debt: it does not repaint enough.
+    ui.mode = UI_MODE_GEN;
+    ui_render_job(UI_RENDER_MODE_CONTENT);
+    assert(!full_scene_clear);
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+}
+
 // Leading zeros are placeholders: the editors keep them in place so the
 // digit under edit never moves, but they must not read as loudly as the
 // digits that carry the value. The last place is never a placeholder.
@@ -542,6 +587,7 @@ int main(void) {
     test_settings_export();
     test_settings_factory_reset();
     test_editor_leading_zeros();
+    test_full_render_clears_on_scene_change();
     test_remote_generator_control();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
