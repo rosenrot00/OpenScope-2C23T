@@ -323,9 +323,50 @@ static void test_display_units_are_si(void) {
     }
 }
 
+// The scope ranges have the multimeter's problem and the same cure: one
+// spelling for the host, which has parsed "500M" since before any of this,
+// and one for the eye, which reads "500M" as five hundred megavolts.
+static void test_scope_ranges_are_readable(void) {
+    const uint8_t *blank = font5x7_get(1);
+    unsigned count = sizeof(scope_vdivs_short) / sizeof(scope_vdivs_short[0]);
+
+    assert(count == SCOPE_VDIV_COUNT);
+    assert(sizeof(scope_vdiv_value) / sizeof(scope_vdiv_value[0]) == count);
+    assert(sizeof(scope_vdiv_unit) / sizeof(scope_vdiv_unit[0]) == count);
+    assert(sizeof(scope_vdiv_x10_value) / sizeof(scope_vdiv_x10_value[0]) == count);
+    assert(sizeof(scope_vdiv_x10_unit) / sizeof(scope_vdiv_x10_unit[0]) == count);
+
+    for (unsigned i = 0; i < count; ++i) {
+        const char *parts[] = {
+            scope_vdiv_value[i], scope_vdiv_unit[i],
+            scope_vdiv_x10_value[i], scope_vdiv_x10_unit[i],
+        };
+        for (unsigned p = 0; p < 4u; ++p) {
+            for (const char *c = parts[p]; *c; ++c) {
+                assert(font5x7_get(*c) != blank);
+            }
+        }
+        // The bottom bar gives each channel 96 pixels and the timebase
+        // starts immediately after, so a range that overflows does not
+        // wrap -- it writes over the field beside it. "CH1 " and the
+        // value are scale 2 at 12 pixels a character, the unit scale 1.
+        assert((4u + strlen(scope_vdiv_value[i])) * 12u +
+               strlen(scope_vdiv_unit[i]) * 6u <= 96u);
+        assert((4u + strlen(scope_vdiv_x10_value[i])) * 12u +
+               strlen(scope_vdiv_x10_unit[i]) * 6u <= 96u);
+    }
+
+    // The version string is shown as written, lower case v and all.
+    for (const char *c = FIRMWARE_VERSION_TEXT; *c; ++c) {
+        assert(font5x7_get(*c) != blank);
+    }
+    assert(font5x7_get('v') != font5x7_get('V'));
+}
+
 int main(void) {
     test_stock_decoding();
     test_display_units_are_si();
+    test_scope_ranges_are_readable();
     test_all_numeric_digits();
     test_status_and_rejected_frames();
     test_relative_precision();

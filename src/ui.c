@@ -645,11 +645,29 @@ static const char *const scope_timebases_short[] = {
     "1M", "2M", "5M", "10M", "20M", "50M",
     "100M", "200M", "500M", "1S", "2S", "5S", "10S",
 };
+// Sent over USB, where the host has parsed this spelling since before we
+// touched it. The screen uses the tables below instead.
 static const char *const scope_vdivs_short[] = {
     "20M", "50M", "100M", "200M", "500M", "1V", "2V", "5V", "10V",
 };
 static const char *const scope_vdivs_x10_short[] = {
     "200M", "500M", "1V", "2V", "5V", "10V", "20V", "50V", "100V",
+};
+// Shown on screen, split in two. The bottom bar gives each channel exactly
+// 96 pixels, which is eight characters at scale 2: "CH1 500M" fitted and
+// "CH1 500mV" does not. Drawing the unit at half size buys the character
+// back, and reads better besides -- the number is the part that changes.
+static const char *const scope_vdiv_value[] = {
+    "20", "50", "100", "200", "500", "1", "2", "5", "10",
+};
+static const char *const scope_vdiv_unit[] = {
+    "mV", "mV", "mV", "mV", "mV", "V", "V", "V", "V",
+};
+static const char *const scope_vdiv_x10_value[] = {
+    "200", "500", "1", "2", "5", "10", "20", "50", "100",
+};
+static const char *const scope_vdiv_x10_unit[] = {
+    "mV", "mV", "V", "V", "V", "V", "V", "V", "V",
 };
 static const uint32_t scope_vdiv_base_mv[] = {20u, 50u, 100u, 200u, 500u, 1000u, 2000u, 5000u, 10000u};
 static const uint16_t scope_vdiv_range_code[] = {1000u, 400u, 200u, 100u, 40u, 20u, 10u, 4u, 2u};
@@ -1630,11 +1648,33 @@ static const char *scope_timebase_chip_label(void) {
     return scope_timebases_short[scope_safe_timebase()];
 }
 
-static const char *scope_vdiv_chip_label(void) {
-    uint8_t idx = ui.active_ch == 2u ? 1u : 0u;
-    uint8_t vdiv = scope_safe_vdiv();
+// The same range for the eye rather than for the host: "500mV", not the
+// "500M" that reads as five hundred megavolts.
+static void scope_vdiv_display(uint8_t idx, const char **value, const char **unit) {
+    uint8_t vdiv;
 
-    return scope_probe_x10[idx] ? scope_vdivs_x10_short[vdiv] : scope_vdivs_short[vdiv];
+    if (idx >= 2u) {
+        idx = 0;
+    }
+    vdiv = scope_vdiv_ch[idx] < SCOPE_VDIV_COUNT ? scope_vdiv_ch[idx] : 0u;
+    if (scope_probe_x10[idx]) {
+        *value = scope_vdiv_x10_value[vdiv];
+        *unit = scope_vdiv_x10_unit[vdiv];
+    } else {
+        *value = scope_vdiv_value[vdiv];
+        *unit = scope_vdiv_unit[vdiv];
+    }
+}
+
+static const char *scope_vdiv_menu_label(void) {
+    static char label[8];
+    const char *value;
+    const char *unit;
+
+    scope_vdiv_display(ui.active_ch == 2u ? 1u : 0u, &value, &unit);
+    scope_text_copy(label, value, sizeof(label));
+    ui_text_append(label, unit, sizeof(label));
+    return label;
 }
 
 static const char *scope_vdiv_chip_label_for_channel(uint8_t idx) {
@@ -1652,23 +1692,32 @@ static void draw_scope_scale_status(uint16_t y, uint16_t bg) {
     char ch2[10];
 
     if (scope_ch_enabled[0]) {
+        const char *value;
+        const char *unit;
+        scope_vdiv_display(0, &value, &unit);
         ch1[0] = 'C';
         ch1[1] = 'H';
         ch1[2] = '1';
         ch1[3] = ' ';
-        scope_text_copy(&ch1[4], scope_vdiv_chip_label_for_channel(0), 6);
+        scope_text_copy(&ch1[4], value, 6);
         lcd_text(0, y, ch1, C_CH1, bg, 2);
+        // The small unit sits on the same baseline as the big digits.
+        lcd_text(lcd_text_width(ch1, 2), (uint16_t)(y + 7u), unit, C_CH1, bg, 1);
     }
     lcd_text_center(96, y, 72, scope_timebase_label(), C_TEXT, bg, 2);
     lcd_text_center(168, y, 56, ui.running ? (scope_slow_roll_active() ? "ROLL" : "RUN") : "HOLD",
                     ui.running ? C_DMM : C_WARN, bg, 2);
     if (scope_ch_enabled[1]) {
+        const char *value;
+        const char *unit;
+        scope_vdiv_display(1, &value, &unit);
         ch2[0] = 'C';
         ch2[1] = 'H';
         ch2[2] = '2';
         ch2[3] = ' ';
-        scope_text_copy(&ch2[4], scope_vdiv_chip_label_for_channel(1), 6);
+        scope_text_copy(&ch2[4], value, 6);
         lcd_text(224, y, ch2, C_CH2, bg, 2);
+        lcd_text((uint16_t)(224u + lcd_text_width(ch2, 2)), (uint16_t)(y + 7u), unit, C_CH2, bg, 1);
     }
 }
 
@@ -2701,7 +2750,7 @@ static const char *scope_param_value(uint8_t param) {
         return scope_probe_label();
     }
     if (param == SCOPE_PARAM_GAIN) {
-        return scope_vdiv_chip_label();
+        return scope_vdiv_menu_label();
     }
     if (param == SCOPE_PARAM_COUPLING) {
         return scope_coupling_label();
@@ -7249,7 +7298,10 @@ static const char *settings_value_text(uint8_t row, char out[12]) {
         return "EXPORT";
     }
     if (row == SETTINGS_ROW_RESET) {
-        return "DEFAULTS";
+        // Seven characters, so it is drawn at the same size as the values
+        // on the tiles beside it; "DEFAULTS" was one too many and dropped
+        // to half size, which made the tile look disabled.
+        return "FACTORY";
     }
     return FIRMWARE_VERSION_TEXT;
 }
