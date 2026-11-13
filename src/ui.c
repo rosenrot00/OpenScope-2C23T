@@ -8046,9 +8046,13 @@ static void capture_screenshot_now(void) {
     ui.screenshot_reason = (uint8_t)saved;
     ui.screenshot_state = saved == SCREENSHOT_SAVE_OK ? SCREENSHOT_STATE_OK : SCREENSHOT_STATE_ERROR;
     ui.screenshot_overlay_ms = SCREENSHOT_OVERLAY_MS;
-    // The drive just changed under the host, and the settings page caches
-    // what it last read: make it ask again rather than show a stale figure.
+    // The drive just changed. The settings page caches what it last read,
+    // so re-read it now rather than leave it showing "--" until the page
+    // is closed and opened again.
     ui.storage_known = 0;
+    if (ui.overlay == UI_OVERLAY_SETTINGS) {
+        settings_refresh_storage();
+    }
     ui_render();
 
     // A host that asked for the capture has no other way of knowing the file
