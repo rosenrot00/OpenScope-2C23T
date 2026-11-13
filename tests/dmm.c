@@ -11,6 +11,7 @@
 #undef volatile
 #undef __asm__
 #include "../src/ui.c"
+#include "../src/font.c"
 
 static void make_frame(const char digits[4], unsigned dots, uint8_t prefix,
                        uint8_t flags_b, uint8_t flags_c, uint8_t frame[9]) {
@@ -302,12 +303,24 @@ static void test_display_units_are_si(void) {
     // Unambiguous units pass through, and a null never crashes the display.
     assert(strcmp(dmm_unit_si_text("V"), "V") == 0);
     assert(strcmp(dmm_unit_si_text("A"), "A") == 0);
-    assert(strcmp(dmm_unit_si_text("DEG"), "DEG") == 0);
+    // Temperature is shown as a degree sign plus C; the font carries the
+    // degree sign on '~', which is why the unit is spelled that way.
+    assert(strcmp(dmm_unit_si_text("DEG"), "~C") == 0);
     assert(strcmp(dmm_unit_si_text(NULL), "") == 0);
 
-    // Note: every lower case letter used above must have a glyph in font.c.
-    // font5x7_get() falls back to a blank for unknown characters, so a missing
-    // glyph would silently erase the unit instead of failing loudly.
+    // Every character these units are made of must have a glyph of its own.
+    // font5x7_get() falls back to a blank for an unknown character, so a
+    // missing glyph would quietly erase part of the unit rather than fail
+    // loudly -- and that blank is exactly what the SI spelling buys back.
+    static const char *const kUnits[] = {
+        "MV", "MA", "UA", "NF", "UF", "MF", "OHM", "KOHM", "MOHM", "DEG",
+    };
+    const uint8_t *blank = font5x7_get(1);   // 1 has no glyph: the blank one
+    for (unsigned u = 0; u < sizeof(kUnits) / sizeof(kUnits[0]); ++u) {
+        for (const char *p = dmm_unit_si_text(kUnits[u]); *p; ++p) {
+            assert(font5x7_get(*p) != blank);
+        }
+    }
 }
 
 int main(void) {

@@ -989,14 +989,15 @@ static void gen_freq_draw_unit(uint16_t x, uint16_t y, uint8_t unit, uint16_t fg
         unit = 0;
     }
     if (unit == 0u) {
-        lcd_text(x, (uint16_t)(y + 4u), "HZ", text, bg, 1);
+        lcd_text(x, (uint16_t)(y + 4u), "Hz", text, bg, 1);
         if (selected) {
             lcd_rect(x, (uint16_t)(y + 14u), 12, 2, C_TEXT);
         }
     } else {
-        char prefix[2] = {unit == 1u ? 'K' : 'M', 0};
+        // k for kilo, M for mega: the case is the unit.
+        char prefix[2] = {unit == 1u ? 'k' : 'M', 0};
         lcd_text((uint16_t)(x + 3u), y, prefix, text, bg, 1);
-        lcd_text(x, (uint16_t)(y + 10u), "HZ", text, bg, 1);
+        lcd_text(x, (uint16_t)(y + 10u), "Hz", text, bg, 1);
         if (selected) {
             lcd_rect(x, (uint16_t)(y + 20u), 12, 2, C_TEXT);
         }
@@ -2081,7 +2082,7 @@ static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t
     char freq_label[12];
 
     lcd_line(gx, y_axis_top, (uint16_t)(gx + gw), y_axis_top, axis_color);
-    lcd_text(gx, (uint16_t)(y_axis_top + 4u), "0.0HZ", RGB565(180, 180, 180), text_bg, 1);
+    lcd_text(gx, (uint16_t)(y_axis_top + 4u), "0.0Hz", RGB565(180, 180, 180), text_bg, 1);
 
     scope_format_frequency_reading(freq_label, (uint32_t)(f_max_hz + 0.5f));
     uint16_t fw = lcd_text_width(freq_label, 1);
@@ -2963,7 +2964,7 @@ static const char *scope_h_pos_label(void) {
         if (ns < 1000u) {
             scope_format_u32(number, ns);
             out = scope_append_text(label, out, sizeof(label), number);
-            out = scope_append_text(label, out, sizeof(label), "NS");
+            out = scope_append_text(label, out, sizeof(label), "ns");
         } else {
             uint32_t us_x10 = (ns + 50u) / 100u;
             scope_format_u32(number, us_x10 / 10u);
@@ -2973,7 +2974,7 @@ static const char *scope_h_pos_label(void) {
                 label[out++] = (char)('0' + us_x10 % 10u);
                 label[out] = 0;
             }
-            out = scope_append_text(label, out, sizeof(label), "US");
+            out = scope_append_text(label, out, sizeof(label), "us");
         }
     } else if (unit_ns < 100000u) {
         uint32_t us_x10 = (mag * 6u * unit_ns + SCOPE_H_POS_LIMIT * 5u) /
@@ -2985,7 +2986,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + us_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "US");
+        out = scope_append_text(label, out, sizeof(label), "us");
     } else if (unit_ns < 100000000u) {
         uint32_t ms_x10 = (mag * 6u * (unit_ns / 1000u) + SCOPE_H_POS_LIMIT * 5u) /
             (SCOPE_H_POS_LIMIT * 10u);
@@ -2996,7 +2997,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + ms_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "MS");
+        out = scope_append_text(label, out, sizeof(label), "ms");
     } else {
         uint32_t s_x10 = (mag * 6u * (unit_ns / 1000000u) + SCOPE_H_POS_LIMIT * 5u) /
             (SCOPE_H_POS_LIMIT * 10u);
@@ -3007,7 +3008,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + s_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "S");
+        out = scope_append_text(label, out, sizeof(label), "s");
     }
     (void)out;
     return label;
@@ -3366,7 +3367,7 @@ static const char *scope_cursor_pos_label(uint8_t idx) {
                 scope_format_signed_float(label[idx], val, "DB");
             } else {
                 val = 180.0f - (float)scope_cursor_y[idx] * 360.0f / 255.0f;
-                scope_format_signed_float(label[idx], val, "DEG");
+                scope_format_signed_float(label[idx], val, "~");
             }
         }
     } else if ((scope_fft_src == 1u || scope_fft_src == 2u) && ui.scope_cursor_mode == SCOPE_CURSOR_TIME) {
@@ -3429,7 +3430,7 @@ static const char *scope_cursor_delta_chip_label(void) {
             float p1 = 180.0f - (float)scope_cursor_y[1] * 360.0f / 255.0f;
             float ddeg = p0 > p1 ? p0 - p1 : p1 - p0;
             label[0] = 'D'; label[1] = 'P'; label[2] = ' ';
-            scope_format_signed_float(&label[3], ddeg, "DEG");
+            scope_format_signed_float(&label[3], ddeg, "~");
         }
     } else if ((scope_fft_src == 1u || scope_fft_src == 2u) && ui.scope_cursor_mode == SCOPE_CURSOR_TIME) {
         float eff_ns = (float)scope_sample_period_ns();
@@ -3916,7 +3917,10 @@ static const char *dmm_unit_si_text(const char *raw) {
     if (ui_text_equal(raw, "NF")) return "nF";
     if (ui_text_equal(raw, "UF")) return "uF";
     if (ui_text_equal(raw, "MF")) return "mF";
-    return raw;   // V, A, F and DEG are unambiguous as they stand
+    // Temperature. The font carries the degree sign on '~' (see font.c), so
+    // the screen can show 23.8 degC instead of the bare word DEG.
+    if (ui_text_equal(raw, "DEG")) return "~C";
+    return raw;   // V, A and F are unambiguous as they stand
 }
 
 static const char *dmm_live_display_unit(void) {
@@ -5492,15 +5496,16 @@ static void scope_format_frequency_reading(char out[12], uint32_t hz) {
     const char *unit;
     uint8_t n;
 
+    // Lower case k, and Hz with only the H capital: the case is the unit.
     if (hz < 1000u) {
         value_x10 = hz * 10u;
-        unit = "HZ";
+        unit = "Hz";
     } else if (hz < 1000000u) {
         value_x10 = (hz + 50u) / 100u;
-        unit = "KHZ";
+        unit = "kHz";
     } else {
         value_x10 = (hz + 50000u) / 100000u;
-        unit = "MHZ";
+        unit = "MHz";
     }
     scope_format_u32(number, value_x10 / 10u);
     scope_text_copy(out, number, 8);
