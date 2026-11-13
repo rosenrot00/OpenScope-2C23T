@@ -7,6 +7,13 @@
 enum {
     SETTINGS_FLASH_BASE = 0x080FF800u,
     SETTINGS_FLASH_SIZE = 2048u,
+    // Written as the first word of the page when it is erased. A firmware
+    // update never erases this page, so without it the settings left behind
+    // by another firmware (the stock one) would be parsed as our own: a
+    // record carries only an 8-bit type and an 8-bit XOR checksum, which
+    // foreign data clears often enough to corrupt the restored settings.
+    SETTINGS_PAGE_MAGIC = 0x2C23A501u,
+    SETTINGS_PAGE_FIRST = SETTINGS_FLASH_BASE + 4u,
     SETTINGS_RECORD_MAGIC = 0xC6000000u,
     SETTINGS_RECORD_MAGIC_MASK = 0xFF000000u,
     SETTINGS_SCOPE_CAL_LEGACY_MAGIC = 0xC8000000u,
@@ -750,7 +757,20 @@ uint8_t settings_load(settings_state_t *settings) {
     settings_state_t latest;
 
     settings_defaults(&latest);
-    for (uint32_t addr = SETTINGS_FLASH_BASE; addr < SETTINGS_FLASH_BASE + SETTINGS_FLASH_SIZE; addr += 4u) {
+    // No signature: the page is either erased or owned by another firmware.
+    // Keep the defaults rather than reading someone else's bytes as records.
+    if (REG32(SETTINGS_FLASH_BASE) != SETTINGS_PAGE_MAGIC) {
+        settings_clamp(&latest);
+        settings_copy(&settings_cached, &latest);
+        settings_copy(&settings_pending, &latest);
+        settings_loaded = 1;
+        settings_dirty = 0;
+        if (settings) {
+            settings_copy(settings, &latest);
+        }
+        return 0;
+    }
+    for (uint32_t addr = SETTINGS_PAGE_FIRST; addr < SETTINGS_FLASH_BASE + SETTINGS_FLASH_SIZE; addr += 4u) {
         uint32_t record = REG32(addr);
         settings_state_t value;
         uint8_t legacy_mode;
@@ -869,7 +889,7 @@ static void flash_program_word(uint32_t addr, uint32_t value) {
 }
 
 static uint32_t settings_first_free_addr(void) {
-    for (uint32_t addr = SETTINGS_FLASH_BASE; addr < SETTINGS_FLASH_BASE + SETTINGS_FLASH_SIZE; addr += 4u) {
+    for (uint32_t addr = SETTINGS_PAGE_FIRST; addr < SETTINGS_FLASH_BASE + SETTINGS_FLASH_SIZE; addr += 4u) {
         if (REG32(addr) == 0xFFFFFFFFu) {
             return addr;
         }
@@ -883,10 +903,17 @@ static void settings_write(const settings_state_t *settings) {
 
     __asm__ volatile("cpsid i" ::: "memory");
     flash_unlock(SETTINGS_FLASH_BASE);
-    addr = settings_first_free_addr();
+    // Claim the page before appending: an unsigned page may hold another
+    // firmware's data, which must be erased rather than written past.
+    if (REG32(SETTINGS_FLASH_BASE) != SETTINGS_PAGE_MAGIC) {
+        addr = 0;
+    } else {
+        addr = settings_first_free_addr();
+    }
     if (!addr || addr + SETTINGS_WRITE_BYTES > SETTINGS_FLASH_BASE + SETTINGS_FLASH_SIZE) {
         flash_erase_settings_page();
-        addr = SETTINGS_FLASH_BASE;
+        flash_program_word(SETTINGS_FLASH_BASE, SETTINGS_PAGE_MAGIC);
+        addr = SETTINGS_PAGE_FIRST;
     }
     flash_program_word(addr, record);
     addr += 4u;
