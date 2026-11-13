@@ -610,11 +610,14 @@ static const uint32_t scope_timebase_unit_ns[] = {
 enum {
     SCOPE_TIMEBASE_COUNT = sizeof(scope_timebase_unit_ns) / sizeof(scope_timebase_unit_ns[0]),
 };
+// Screen labels, with the SI prefixes spelled properly: "US" is not a unit
+// and "MS" could be read as megaseconds. Display only -- the USB protocol
+// uses scope_timebases_short[] below, which keeps its own spelling.
 static const char *const scope_timebases[] = {
-    "50NS", "100NS", "200NS", "500NS", "1US", "2US", "5US",
-    "10US", "20US", "50US", "100US", "200US", "500US",
-    "1MS", "2MS", "5MS", "10MS", "20MS", "50MS",
-    "100MS", "200MS", "500MS", "1S", "2S", "5S", "10S",
+    "50ns", "100ns", "200ns", "500ns", "1us", "2us", "5us",
+    "10us", "20us", "50us", "100us", "200us", "500us",
+    "1ms", "2ms", "5ms", "10ms", "20ms", "50ms",
+    "100ms", "200ms", "500ms", "1s", "2s", "5s", "10s",
 };
 static const char *const scope_timebases_short[] = {
     "50N", "100N", "200N", "500N", "1U", "2U", "5U",
@@ -3854,9 +3857,30 @@ static const char *dmm_live_display_value(void) {
     return dmm_mode_uses_real_reading() ? dmm_value_text() : dmm_values[ui.dmm_mode];
 }
 
+// Units are spelled in upper case internally and over USB ("MV", "MOHM",
+// "UF"), but case is exactly what tells milli from mega: "MOHM" read the same
+// whether it meant milliohm or megohm, and "MV" looked like megavolt. Spell
+// them properly for the screen; the USB protocol keeps its own spelling so
+// existing PC software is unaffected.
+static const char *dmm_unit_si_text(const char *raw) {
+    if (!raw) {
+        return "";
+    }
+    if (ui_text_equal(raw, "MV")) return "mV";
+    if (ui_text_equal(raw, "MA")) return "mA";
+    if (ui_text_equal(raw, "UA")) return "uA";
+    if (ui_text_equal(raw, "OHM")) return "Ohm";
+    if (ui_text_equal(raw, "KOHM")) return "kOhm";
+    if (ui_text_equal(raw, "MOHM")) return "MOhm";
+    if (ui_text_equal(raw, "NF")) return "nF";
+    if (ui_text_equal(raw, "UF")) return "uF";
+    if (ui_text_equal(raw, "MF")) return "mF";
+    return raw;   // V, A, F and DEG are unambiguous as they stand
+}
+
 static const char *dmm_live_display_unit(void) {
     if (ui.dmm_mode == DMM_MODE_AUTO) {
-        return dmm_has_reading() && !ui_text_equal(dmm_value_text(), "AUTO") ? dmm_unit_text() : "";
+        return dmm_has_reading() && !ui_text_equal(dmm_value_text(), "AUTO") ? dmm_unit_si_text(dmm_unit_text()) : "";
     }
     if (dmm_live_open_display()) {
         return "";
@@ -3867,7 +3891,7 @@ static const char *dmm_live_display_unit(void) {
     if (ui.dmm_mode == DMM_MODE_LIVE) {
         return "";
     }
-    return dmm_mode_uses_real_reading() ? dmm_unit_text() : dmm_units[ui.dmm_mode];
+    return dmm_unit_si_text(dmm_mode_uses_real_reading() ? dmm_unit_text() : dmm_units[ui.dmm_mode]);
 }
 
 static const char *dmm_rel_display_value(void) {

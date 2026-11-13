@@ -51,16 +51,38 @@ static const glyph_t glyphs[] = {
     {'X', {0x63,0x14,0x08,0x14,0x63}},
     {'Y', {0x07,0x08,0x70,0x08,0x07}},
     {'Z', {0x61,0x51,0x49,0x45,0x43}},
+    // Lower case letters needed by the SI prefixes. Without them the display
+    // could only shout "MV" or "US", where the case carries the meaning:
+    // m is milli and M is mega, so "MOHM" read the same as a milliohm.
+    // Only the letters the units use are here, to keep the table small.
+    {'h', {0x7F,0x08,0x04,0x04,0x78}},
+    {'k', {0x7F,0x10,0x28,0x44,0x00}},
+    {'m', {0x7C,0x04,0x18,0x04,0x78}},
+    {'n', {0x7C,0x08,0x04,0x04,0x78}},
+    {'o', {0x38,0x44,0x44,0x44,0x38}},
+    {'p', {0x7C,0x14,0x14,0x14,0x08}},
+    {'s', {0x48,0x54,0x54,0x54,0x20}},
+    {'u', {0x3C,0x40,0x40,0x40,0x3C}},
+    {'z', {0x44,0x64,0x54,0x4C,0x44}},
 };
 
 const uint8_t *font5x7_get(char c) {
-    if (c >= 'a' && c <= 'z') {
-        c = (char)(c - ('a' - 'A'));
-    }
-
+    // Look the character up as given, so the lower case glyphs above are
+    // reachable. Only then fall back to upper case, which is what the rest
+    // of the UI relies on for letters that have no lower case glyph: before
+    // these were added, every lower case character was folded on the way in,
+    // which is why units could only ever be shouted.
     for (uint32_t i = 0; i < sizeof(glyphs) / sizeof(glyphs[0]); ++i) {
         if (glyphs[i].c == c) {
             return glyphs[i].col;
+        }
+    }
+    if (c >= 'a' && c <= 'z') {
+        char upper = (char)(c - ('a' - 'A'));
+        for (uint32_t i = 0; i < sizeof(glyphs) / sizeof(glyphs[0]); ++i) {
+            if (glyphs[i].c == upper) {
+                return glyphs[i].col;
+            }
         }
     }
     return glyphs[0].col;

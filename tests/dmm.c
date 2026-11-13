@@ -65,9 +65,9 @@ static void test_stock_decoding(void) {
     reading(1, "1234", 0, 0, 0, 2, "1234", "V");
     reading(12, "1234", 2, 0x10, 0, 1, "1.234", "UA");
     assert(strcmp(dmm_live_display_value(), "1.2340") == 0);
-    assert(strcmp(dmm_live_display_unit(), "UA") == 0);
+    assert(strcmp(dmm_live_display_unit(), "uA") == 0);
     reading(10, "1234", 2, 0, 1, 1, "1.234", "MA");
-    assert(strcmp(dmm_live_display_unit(), "MA") == 0);
+    assert(strcmp(dmm_live_display_unit(), "mA") == 0);
     reading(12, "0499", 0, 0x10, 0, 1, "499", "UA");
     reading(10, "0123", 5, 0, 0, 1, "-1.23", "A");
     reading(12, "0123", 5, 0, 1, 1, "-1.23", "MA");
@@ -281,8 +281,38 @@ static void test_packet_boundaries(void) {
     assert(rx_ready && memcmp((const void *)rx_pending, frame, 9) == 0);
 }
 
+// Case carries the meaning in SI prefixes, so the screen must not shout the
+// units: "MV" reads as megavolt, "US" is not a unit at all, and "MOHM" was
+// indistinguishable from a milliohm. The USB protocol keeps its own upper
+// case spelling, which is why only the display text is translated.
+static void test_display_units_are_si(void) {
+    assert(strcmp(dmm_unit_si_text("MV"), "mV") == 0);
+    assert(strcmp(dmm_unit_si_text("MA"), "mA") == 0);
+    assert(strcmp(dmm_unit_si_text("UA"), "uA") == 0);
+    assert(strcmp(dmm_unit_si_text("NF"), "nF") == 0);
+    assert(strcmp(dmm_unit_si_text("UF"), "uF") == 0);
+    assert(strcmp(dmm_unit_si_text("MF"), "mF") == 0);
+
+    // milli and mega must no longer collide.
+    assert(strcmp(dmm_unit_si_text("OHM"), "Ohm") == 0);
+    assert(strcmp(dmm_unit_si_text("KOHM"), "kOhm") == 0);
+    assert(strcmp(dmm_unit_si_text("MOHM"), "MOhm") == 0);
+    assert(strcmp(dmm_unit_si_text("KOHM"), dmm_unit_si_text("MOHM")) != 0);
+
+    // Unambiguous units pass through, and a null never crashes the display.
+    assert(strcmp(dmm_unit_si_text("V"), "V") == 0);
+    assert(strcmp(dmm_unit_si_text("A"), "A") == 0);
+    assert(strcmp(dmm_unit_si_text("DEG"), "DEG") == 0);
+    assert(strcmp(dmm_unit_si_text(NULL), "") == 0);
+
+    // Note: every lower case letter used above must have a glyph in font.c.
+    // font5x7_get() falls back to a blank for unknown characters, so a missing
+    // glyph would silently erase the unit instead of failing loudly.
+}
+
 int main(void) {
     test_stock_decoding();
+    test_display_units_are_si();
     test_all_numeric_digits();
     test_status_and_rejected_frames();
     test_relative_precision();
