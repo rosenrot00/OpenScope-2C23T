@@ -1950,6 +1950,7 @@ static uint8_t handle_cdc_gen_command(const char *cmd) {
 }
 
 static void handle_cdc_rx_command(const char *cmd) {
+    const char *arg;
     if (!cmd) return;
     if (handle_cdc_gen_command(cmd)) return;
     if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
@@ -1976,6 +1977,34 @@ static void handle_cdc_rx_command(const char *cmd) {
             else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
             else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
         }
+    } else if ((arg = cdc_match_prefix(cmd, "KEY:")) != 0) {
+        // Presses a button as if it had been pushed on the device, so the
+        // whole interface can be walked from a PC.
+        static const struct { const char *name; uint32_t mask; } keys[] = {
+            { "MENU", KEY_MENU }, { "OK", KEY_OK },
+            { "UP", KEY_UP }, { "DOWN", KEY_DOWN },
+            { "LEFT", KEY_LEFT }, { "RIGHT", KEY_RIGHT },
+            { "AUTO", KEY_AUTO }, { "MOVE", KEY_MOVE }, { "SAVE", KEY_SAVE },
+            { "CH1", KEY_CH1 }, { "CH2", KEY_CH2 },
+            { "F2", KEY_F2 }, { "F3", KEY_F3 }, { "F4", KEY_F4 },
+            { "AUTO_LONG", KEY_AUTO_LONG }, { "SAVE_LONG", KEY_SAVE_LONG },
+            { "MOVE_LONG", KEY_MOVE_LONG }, { "F2_LONG", KEY_F2_LONG },
+            { "F3_LONG", KEY_F3_LONG }, { "F4_LONG", KEY_F4_LONG },
+            { "CH1_LONG", KEY_CH1_LONG },
+        };
+        for (uint8_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+            const char *rest = cdc_match_prefix(arg, keys[i].name);
+            // The receive buffer still holds the line ending, and a short
+            // name must not match a longer one: "MOVE" is not "MOVE_LONG".
+            if (rest && (*rest == 0 || *rest == 13 || *rest == 10)) {
+                ui_inject_keys(keys[i].mask);
+                break;
+            }
+        }
+    } else if (cmd[0] == 'S' && cmd[1] == 'H' && cmd[2] == 'O' && cmd[3] == 'T') {
+        // Saves the current screen as IMG_NN.BMP on the USB drive. The reply
+        // ($SHOT,OK or $SHOT,ERR) is sent once the file has been written.
+        ui_request_screenshot();
     } else if (cmd[0] == 'S' && cmd[1] == 'C' && cmd[2] == 'O' && cmd[3] == 'P' && cmd[4] == 'E' && cmd[5] == ':') {
         const char *s = cmd + 6;
         if (s[0] == 'R' && s[1] == 'U' && s[2] == 'N') {

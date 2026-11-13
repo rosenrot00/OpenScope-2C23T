@@ -7913,14 +7913,35 @@ static void softkeys_flash(void) {
     softkeys_flash_for(SOFTKEY_FLASH_MS);
 }
 
+// Set from the USB command handler, acted on in ui_tick(): the capture
+// writes to the SPI flash and walks the FAT, which must not run from the
+// USB interrupt that received the command.
+static uint8_t screenshot_requested;
+
+// Same reasoning for injected key events: ui_handle_keys() redraws, so it
+// runs from the main loop rather than the interrupt.
+static uint32_t keys_injected;
+
 static void capture_screenshot_now(void) {
     ui.screenshot_state = SCREENSHOT_STATE_SAVING;
     ui.screenshot_overlay_ms = SCREENSHOT_OVERLAY_MS;
     draw_screenshot_overlay(C_BG);
 
-    ui.screenshot_state = usb_msc_store_screenshot() ? SCREENSHOT_STATE_OK : SCREENSHOT_STATE_ERROR;
+    uint8_t saved = usb_msc_store_screenshot();
+
+    ui.screenshot_state = saved ? SCREENSHOT_STATE_OK : SCREENSHOT_STATE_ERROR;
     ui.screenshot_overlay_ms = SCREENSHOT_OVERLAY_MS;
     ui_render();
+
+    // A host that asked for the capture has no other way of knowing the file
+    // was written: the drive is not mounted while the device owns it.
+    if (usb_cdc_is_configured()) {
+        if (saved) {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,OK\r\n", 10);
+        } else {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR\r\n", 11);
+        }
+    }
 }
 
 static void dmm_pause_for_menu_overlay(void) {
@@ -10765,6 +10786,18 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
 
 void ui_tick(uint32_t elapsed_ms) {
     uint8_t rendered = 0;
+
+    if (keys_injected) {
+        uint32_t events = keys_injected;
+        keys_injected = 0;
+        ui_handle_keys(events);
+    }
+
+    if (screenshot_requested) {
+        screenshot_requested = 0;
+        capture_screenshot_now();
+    }
+
     uint8_t battery_changed = 0;
     uint8_t fw_update_changed = 0;
     fw_update_status_t fw_status;
@@ -11008,6 +11041,17 @@ void ui_scope_step_timebase(int8_t dir) {
         scope_step_timebase(dir);
         ui_render_mode_content();
     }
+}
+
+// Asks for a screenshot; the capture happens on the next ui_tick().
+void ui_request_screenshot(void) {
+    screenshot_requested = 1;
+}
+
+// Queues key events as if the buttons had been pressed, so the interface can
+// be driven from a PC. Handled on the next ui_tick().
+void ui_inject_keys(uint32_t events) {
+    keys_injected |= events;
 }
 
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir) {

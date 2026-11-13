@@ -73,6 +73,10 @@ void ui_scope_set_running(uint8_t run) { (void)run; }
 void ui_scope_trigger_auto(void) {}
 void ui_scope_step_timebase(int8_t dir) { (void)dir; }
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir) { (void)ch; (void)dir; }
+static unsigned screenshot_requests;
+static uint32_t injected_keys;
+void ui_request_screenshot(void) { ++screenshot_requests; }
+void ui_inject_keys(uint32_t events) { injected_keys |= events; }
 void ui_gen_set_output(uint8_t run) { (void)run; }
 void ui_gen_set_frequency(uint32_t hz) { remote_freq = hz; ++remote_freq_calls; }
 void ui_gen_set_wave(uint8_t wave) { (void)wave; }
@@ -318,6 +322,20 @@ static void test_cdc_command_dispatch(void) {
     usb_configured = 0;
     usb_cdc_send_bytes(command, 1);
     assert(cdc_tx_head == CDC_TX_BUF_SIZE - 5u);
+    // SHOT and KEY: are the two commands that act on the interface rather
+    // than on the generator, so they are the ones that must reach the UI.
+    screenshot_requests = 0;
+    injected_keys = 0;
+    handle_cdc_rx_command("SHOT");
+    assert(screenshot_requests == 1u);
+    handle_cdc_rx_command("KEY:MENU");
+    handle_cdc_rx_command("KEY:AUTO_LONG");
+    assert(injected_keys != 0u);
+    // An unknown key name must do nothing at all rather than guess.
+    uint32_t before = injected_keys;
+    handle_cdc_rx_command("KEY:NOSUCHKEY");
+    assert(injected_keys == before);
+
     puts("USB CDC deferred dispatch, numeric bounds and whole-line overflow checks passed");
 }
 
