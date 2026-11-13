@@ -270,6 +270,11 @@ static uint8_t gen_deferred_apply;
 static uint16_t gen_deferred_apply_ms;
 static uint8_t gen_output_applied;
 static uint8_t gen_running;
+// What the user asked for, as opposed to what the hardware is doing.
+// Entering the multimeter silences the generator through gen_stop(), which
+// clears gen_running; this flag survives so the output can be brought back
+// on the way out instead of disappearing without the user asking.
+static uint8_t gen_user_enabled;
 static uint8_t gen_sweep_menu_active = 0;
 static uint8_t gen_sweep_row_selected = 0; // 0 to 4
 static uint8_t ui_edit_digit_index = 0; // 0 to 3 (which of the 4 digits is active)
@@ -7523,6 +7528,17 @@ static uint8_t battery_blink_tick(uint32_t elapsed_ms) {
     return 0;
 }
 
+// Leaving the multimeter: gen_stop() silenced the generator on the way in,
+// but the user never asked for that. Restore the output so it does not stay
+// off without any indication. The stock firmware keeps it running throughout.
+static void gen_resume_after_dmm(ui_mode_t old_mode) {
+    if (old_mode != UI_MODE_DMM || !gen_user_enabled || gen_running) {
+        return;
+    }
+    gen_running = 1;
+    gen_apply();
+}
+
 static void ui_switch_mode(ui_mode_t mode) {
     ui_mode_t old_mode = ui.mode;
 
@@ -7531,6 +7547,7 @@ static void ui_switch_mode(ui_mode_t mode) {
     }
     if (old_mode == UI_MODE_GEN && mode != UI_MODE_GEN) {
         gen_running = ui.running ? 1u : 0u;
+        gen_user_enabled = gen_running;
         if (gen_running || gen_output_applied || gen_deferred_apply) {
             gen_apply();
         } else {
@@ -7571,6 +7588,7 @@ static void ui_switch_mode(ui_mode_t mode) {
         scope_auto_channel_steps_left = 0;
         scope_auto_channel_second_pass = 0;
         scope_sanitize_state();
+        gen_resume_after_dmm(old_mode);
         ui.running = 1;
         ui.scope_ms = 0;
         scope_frame_valid = 0;
@@ -7587,6 +7605,7 @@ static void ui_switch_mode(ui_mode_t mode) {
         scope_trace_cache[1].valid = 0;
 #endif
     } else if (mode == UI_MODE_GEN) {
+        gen_resume_after_dmm(old_mode);
         ui.running = gen_running;
         gen_freq_edit_pos = 0;
         gen_freq_sync_editor_unit();
@@ -10467,6 +10486,7 @@ void ui_handle_keys(uint32_t events) {
             ui.running ^= 1u;
             if (ui.mode == UI_MODE_GEN) {
                 gen_running = ui.running ? 1u : 0u;
+                gen_user_enabled = gen_running;
                 gen_apply();
             } else if (ui.running) {
                 scope_hw_arm();

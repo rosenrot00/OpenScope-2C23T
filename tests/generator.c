@@ -130,6 +130,7 @@ static void setup(void) {
     bode_siggen_active = bode_is_sweeping = bode_saved.valid = 0;
     scope_fft_src = 0;
     gen_running = ui.running = 1;
+    gen_user_enabled = 1;
     gen_output_applied = 0;
     ui.mode = UI_MODE_GEN;
     ui.overlay = UI_OVERLAY_NONE;
@@ -166,8 +167,12 @@ static void test_mode_switches(void) {
         unsigned writes = timing_writes;
         for (unsigned i = 0; i < 10; ++i) ui_tick(20);
         assert(!tuning_word && timing_writes == writes);
+        // Behaviour change: the generator the user had left running is brought
+        // back when leaving the multimeter, instead of staying silent with no
+        // indication. The stock firmware never cuts the output at all.
+        // (previously: assert(!ui.running && !gen_running && !tuning_word))
         ui_switch_mode(UI_MODE_GEN);
-        assert(!ui.running && !gen_running && !tuning_word);
+        assert(ui.running && gen_running && tuning_word);
         ui.running = gen_running = 1;
         gen_apply();
         assert(tuning_word && gen_output_applied);
@@ -345,8 +350,42 @@ static void test_settings_export(void) {
     }
 }
 
+// The multimeter silences the generator on purpose, but the user never asked
+// for it: leaving the multimeter must bring the output back. The stock
+// firmware never cuts it at all, so losing it silently is a regression.
+static void test_generator_resumes_after_dmm(void) {
+    setup();
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(gen_running && tuning_word);
+
+    // Entering the multimeter still silences the output.
+    ui_switch_mode(UI_MODE_DMM);
+    assert(!gen_running && !tuning_word);
+    assert_zero_output();
+
+    // Leaving it towards the scope brings the generator back.
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(gen_running && tuning_word);
+
+    // Same when going straight back to the generator screen.
+    ui_switch_mode(UI_MODE_DMM);
+    assert(!gen_running);
+    ui_switch_mode(UI_MODE_GEN);
+    assert(gen_running && ui.running && tuning_word);
+
+    // A generator the user stopped must stay stopped across the multimeter.
+    ui.running = 0;
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(!gen_running && !gen_user_enabled);
+    ui_switch_mode(UI_MODE_DMM);
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(!gen_running);
+    assert_zero_output();
+}
+
 int main(void) {
     test_mode_switches();
+    test_generator_resumes_after_dmm();
     test_failed_csv();
     test_deferred_uploads();
     test_bode_ownership();
