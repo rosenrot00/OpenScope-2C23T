@@ -1820,7 +1820,10 @@ static void ep1_in(void) {
     }
 }
 
-enum { CDC_TX_BUF_SIZE = 2048 };
+// One scope frame is meta + 2 x 610 bytes of waveform, written in one go.
+// usb_cdc_send_bytes() silently drops the oldest bytes when this overflows,
+// so keep comfortable headroom above a full frame.
+enum { CDC_TX_BUF_SIZE = 4096 };
 static uint8_t cdc_tx_buf[CDC_TX_BUF_SIZE];
 static volatile uint16_t cdc_tx_head;
 static volatile uint16_t cdc_tx_tail;
