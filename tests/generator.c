@@ -442,6 +442,25 @@ static void test_remote_generator_control(void) {
     ui_gen_set_output(0);
     assert(!ui_gen_is_running());
     assert(ui.mode == UI_MODE_SCOPE);
+
+    ui_switch_mode(UI_MODE_DMM);
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(!gen_running && !tuning_word);
+    assert_zero_output();
+
+    ui_switch_mode(UI_MODE_DMM);
+    ui_gen_set_output(1);
+    assert(gen_user_enabled && !gen_running && !tuning_word);
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(gen_running && tuning_word);
+
+    bode_begin_sweep();
+    uint32_t bode_word = tuning_word;
+    ui_gen_set_frequency(1500u);
+    ui_gen_set_output(0);
+    assert(bode_siggen_active && tuning_word == bode_word);
+    bode_shutdown(1);
+    assert(!gen_running && !tuning_word);
 }
 
 int main(void) {

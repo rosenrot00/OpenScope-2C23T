@@ -8087,6 +8087,9 @@ static uint32_t gen_get_current_sweep_freq(void) {
 
 static void gen_apply(void) {
     gen_prepare_state();
+    if (bode_siggen_active) {
+        return;
+    }
     if (!gen_running && !gen_output_applied) {
         gen_deferred_apply = 0;
         gen_deferred_apply_ms = 0;
@@ -11031,7 +11034,8 @@ static void ui_gen_refresh(void) {
 }
 
 void ui_gen_set_output(uint8_t run) {
-    gen_running = run ? 1u : 0u;
+    gen_user_enabled = run ? 1u : 0u;
+    gen_running = gen_user_enabled && ui.mode != UI_MODE_DMM;
     gen_apply();
     ui_gen_refresh();
 }

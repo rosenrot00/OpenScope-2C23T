@@ -28,6 +28,8 @@ static uint32_t corrupt_addr;
 static uint8_t corrupt_pending;
 static uint8_t last_progress;
 static uint8_t saw_completion;
+static uint32_t remote_freq;
+static unsigned remote_freq_calls;
 
 uint8_t bootloader_readable(void) { return readable; }
 uint8_t bootloader_vectors_valid(const uint8_t *data) { assert(data == source_data); return valid_vectors; }
@@ -60,10 +62,26 @@ void fw_update_status(fw_update_status_t *status) {
     if (update_busy) status->state = FW_UPDATE_STATE_STAGING;
 }
 void fw_update_clear(void) {}
+uint8_t fw_update_request_apply(void) { return 0; }
 void fw_update_note_file(uint32_t base_lba, uint32_t size) { (void)base_lba; (void)size; }
 void fw_update_usb_data(uint32_t lba, uint16_t sector_offset, const uint8_t *data, uint16_t len) {
     (void)lba; (void)sector_offset; (void)data; (void)len;
 }
+void ui_set_dmm_mode(uint8_t mode) { (void)mode; }
+void ui_set_main_mode(uint8_t mode) { (void)mode; }
+void ui_scope_set_running(uint8_t run) { (void)run; }
+void ui_scope_trigger_auto(void) {}
+void ui_scope_step_timebase(int8_t dir) { (void)dir; }
+void ui_scope_step_vdiv(uint8_t ch, int8_t dir) { (void)ch; (void)dir; }
+void ui_gen_set_output(uint8_t run) { (void)run; }
+void ui_gen_set_frequency(uint32_t hz) { remote_freq = hz; ++remote_freq_calls; }
+void ui_gen_set_wave(uint8_t wave) { (void)wave; }
+void ui_gen_set_amplitude(uint8_t tenths_v) { (void)tenths_v; }
+void ui_gen_set_duty(uint8_t duty_percent) { (void)duty_percent; }
+uint8_t ui_gen_is_running(void) { return 0; }
+uint32_t ui_gen_frequency(void) { return remote_freq; }
+uint8_t ui_gen_wave(void) { return 0; }
+uint8_t ui_gen_amplitude(void) { return 33; }
 uint8_t screenshot_render_current(uint32_t offset, uint8_t *dst, uint16_t len) {
     for (uint16_t i = 0; i < len; ++i) dst[i] = (uint8_t)(offset + i);
     return 1;
@@ -271,6 +289,38 @@ static void test_storage_busy(void) {
     usb_ready = 0;
 }
 
+static void test_cdc_command_dispatch(void) {
+    static const uint8_t command[] = "GEN:FREQ:2000\r\n";
+    (void)setup(512, FAT_TYPE_12, 1);
+    usb_ready = usb_configured = 1;
+    remote_freq = remote_freq_calls = 0;
+    cdc_rx_pending = 0;
+    REG32(NVIC_ISER0) = USB_IRQ_MASK;
+    pma_write(USB_EP3_RX, command, sizeof(command) - 1u);
+    USB_PMA16(3u * 8u + 6u) = sizeof(command) - 1u;
+    cdc_receive_command();
+    assert(cdc_rx_pending && !remote_freq_calls);
+    usb_msc_poll();
+    assert(!cdc_rx_pending && remote_freq_calls == 1 && remote_freq == 2000u);
+    usb_msc_poll();
+    assert(remote_freq_calls == 1);
+    assert(handle_cdc_gen_command("GEN:FREQ:4294967295"));
+    assert(remote_freq == UINT32_MAX && remote_freq_calls == 2);
+    assert(handle_cdc_gen_command("GEN:FREQ:4294967296"));
+    assert(handle_cdc_gen_command("GEN:FREQ:10junk"));
+    assert(remote_freq_calls == 2);
+
+    cdc_tx_tail = 0;
+    cdc_tx_head = CDC_TX_BUF_SIZE - 5u;
+    cdc_tx_busy = 1;
+    usb_cdc_send_bytes(command, sizeof(command) - 1u);
+    assert(cdc_tx_head == CDC_TX_BUF_SIZE - 5u && cdc_tx_tail == 0);
+    usb_configured = 0;
+    usb_cdc_send_bytes(command, 1);
+    assert(cdc_tx_head == CDC_TX_BUF_SIZE - 5u);
+    puts("USB CDC deferred dispatch, numeric bounds and whole-line overflow checks passed");
+}
+
 int main(void) {
     test_export(512, FAT_TYPE_12, 1);
     test_export(4096, FAT_TYPE_12, 2);
@@ -279,5 +329,6 @@ int main(void) {
     test_failures();
     test_screenshot();
     test_storage_busy();
+    test_cdc_command_dispatch();
     puts("bootloader FAT export checks passed (" HW_TARGET_NAME ")");
 }

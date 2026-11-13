@@ -5,6 +5,7 @@
 #include "fw_update.h"
 #include "hw.h"
 #include "screenshot.h"
+#include "ui.h"
 #include "w25q.h"
 
 #include <stddef.h>
@@ -118,7 +119,7 @@ static const uint8_t *ep0_ptr;
 static uint16_t ep0_left;
 static uint8_t ep0_pending_address;
 static uint8_t ep0_address_pending;
-static uint8_t usb_configured;
+static volatile uint8_t usb_configured;
 static uint8_t usb_ready;
 
 static enum MscState msc_state;
@@ -1820,30 +1821,29 @@ static void ep1_in(void) {
     }
 }
 
-// One scope frame is meta + 2 x 610 bytes of waveform, written in one go.
-// usb_cdc_send_bytes() silently drops the oldest bytes when this overflows,
-// so keep comfortable headroom above a full frame.
-enum { CDC_TX_BUF_SIZE = 4096 };
+// Leave room for several complete scope frames.
+enum { CDC_TX_BUF_SIZE = 4096, USB_IRQ_MASK = 1u << 20 };
 static uint8_t cdc_tx_buf[CDC_TX_BUF_SIZE];
 static volatile uint16_t cdc_tx_head;
 static volatile uint16_t cdc_tx_tail;
 static volatile uint8_t cdc_tx_busy;
+static uint8_t cdc_rx_command[32];
+static volatile uint8_t cdc_rx_pending;
 
-void ui_set_dmm_mode(uint8_t mode);
-void ui_set_main_mode(uint8_t mode);
-void ui_scope_set_running(uint8_t run);
-void ui_scope_trigger_auto(void);
-void ui_scope_step_timebase(int8_t dir);
-void ui_scope_step_vdiv(uint8_t ch, int8_t dir);
-void ui_gen_set_output(uint8_t run);
-void ui_gen_set_frequency(uint32_t hz);
-void ui_gen_set_wave(uint8_t wave);
-void ui_gen_set_amplitude(uint8_t tenths_v);
-void ui_gen_set_duty(uint8_t duty_percent);
-uint8_t ui_gen_is_running(void);
-uint32_t ui_gen_frequency(void);
-uint8_t ui_gen_wave(void);
-uint8_t ui_gen_amplitude(void);
+static uint32_t cdc_pause_usb_irq(void) {
+    uint32_t enabled = REG32(NVIC_ISER0) & USB_IRQ_MASK;
+    REG32(0xE000E180u) = USB_IRQ_MASK;
+#if defined(__arm__)
+    __asm__ volatile("dsb\nisb" ::: "memory");
+#endif
+    return enabled;
+}
+
+static void cdc_restore_usb_irq(uint32_t enabled) {
+    if (enabled) {
+        REG32(NVIC_ISER0) = enabled;
+    }
+}
 
 // Returns the text after `prefix`, or 0 when `cmd` does not start with it.
 static const char *cdc_match_prefix(const char *cmd, const char *prefix) {
@@ -1857,20 +1857,26 @@ static const char *cdc_match_prefix(const char *cmd, const char *prefix) {
     return cmd;
 }
 
-// Parses a decimal value; returns 0 when no digit is present.
+static uint8_t cdc_command_end(const char *text) {
+    while (*text == '\r' || *text == '\n') ++text;
+    return *text == '\0';
+}
+
 static uint8_t cdc_parse_u32(const char *text, uint32_t *out) {
     uint32_t value = 0;
     uint8_t digits = 0;
 
     while (*text >= '0' && *text <= '9') {
-        if (value > 429496729u) {
+        uint32_t digit = (uint32_t)(*text - '0');
+        if (value > UINT32_MAX / 10u ||
+            (value == UINT32_MAX / 10u && digit > UINT32_MAX % 10u)) {
             return 0;
         }
-        value = value * 10u + (uint32_t)(*text - '0');
+        value = value * 10u + digit;
         ++text;
         ++digits;
     }
-    if (!digits) {
+    if (!digits || !cdc_command_end(text)) {
         return 0;
     }
     *out = value;
@@ -1923,11 +1929,11 @@ static uint8_t handle_cdc_gen_command(const char *cmd) {
     if (!arg) {
         return 0;
     }
-    if (cdc_match_prefix(arg, "RUN")) {
+    if ((arg = cdc_match_prefix(cmd, "GEN:RUN")) != 0 && cdc_command_end(arg)) {
         ui_gen_set_output(1);
-    } else if (cdc_match_prefix(arg, "STOP")) {
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:STOP")) != 0 && cdc_command_end(arg)) {
         ui_gen_set_output(0);
-    } else if (cdc_match_prefix(arg, "?")) {
+    } else if ((arg = cdc_match_prefix(cmd, "GEN:?")) != 0 && cdc_command_end(arg)) {
         cdc_send_gen_state();
     } else if ((arg = cdc_match_prefix(cmd, "GEN:FREQ:")) != 0) {
         if (cdc_parse_u32(arg, &value)) ui_gen_set_frequency(value);
@@ -1991,6 +1997,36 @@ static void handle_cdc_rx_command(const char *cmd) {
     }
 }
 
+// Keep OUT NAKed until the main loop can run the command outside the IRQ.
+static void cdc_receive_command(void) {
+    uint16_t len = pma_get_rx_count(3);
+    if (usb_configured && !cdc_rx_pending && len && len < sizeof(cdc_rx_command)) {
+        pma_read(USB_EP3_RX, cdc_rx_command, len);
+        cdc_rx_command[len] = 0;
+        cdc_rx_pending = 1;
+    }
+    ep_clear_rx_ctr(3);
+    ep_set_rx_stat(3, usb_configured && !cdc_rx_pending ? USB_STAT_VALID : USB_STAT_NAK);
+}
+
+static void cdc_poll_command(void) {
+    if (!cdc_rx_pending) {
+        return;
+    }
+    uint8_t command[sizeof(cdc_rx_command)];
+    uint32_t irq = cdc_pause_usb_irq();
+    uint8_t pending = cdc_rx_pending && usb_configured;
+    if (pending) {
+        buf_copy(command, cdc_rx_command, sizeof(command));
+        cdc_rx_pending = 0;
+        ep_set_rx_stat(3, USB_STAT_VALID);
+    }
+    cdc_restore_usb_irq(irq);
+    if (pending) {
+        handle_cdc_rx_command((const char *)command);
+    }
+}
+
 static void cdc_pump_tx(void) {
     if (!usb_configured || cdc_tx_busy) {
         return;
@@ -2018,15 +2054,20 @@ static void cdc_tx_complete(void) {
 }
 
 void usb_cdc_send_bytes(const uint8_t *data, uint16_t len) {
-    for (uint16_t i = 0; i < len; ++i) {
-        uint16_t next = (uint16_t)((cdc_tx_head + 1u) % CDC_TX_BUF_SIZE);
-        if (next == cdc_tx_tail) {
-            cdc_tx_tail = (uint16_t)((cdc_tx_tail + 1u) % CDC_TX_BUF_SIZE);
-        }
-        cdc_tx_buf[cdc_tx_head] = data[i];
-        cdc_tx_head = next;
+    if (!usb_configured) {
+        return;
     }
-    cdc_pump_tx();
+    uint32_t irq = cdc_pause_usb_irq();
+    uint16_t free_bytes = (uint16_t)((cdc_tx_tail - cdc_tx_head - 1u) & (CDC_TX_BUF_SIZE - 1u));
+    // Drop a whole line rather than corrupting a line already in flight.
+    if (usb_configured && len <= free_bytes) {
+        for (uint16_t i = 0; i < len; ++i) {
+            cdc_tx_buf[cdc_tx_head] = data[i];
+            cdc_tx_head = (uint16_t)((cdc_tx_head + 1u) % CDC_TX_BUF_SIZE);
+        }
+        cdc_pump_tx();
+    }
+    cdc_restore_usb_irq(irq);
 }
 
 void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid) {
@@ -2134,6 +2175,7 @@ static void usb_handle_setup(const uint8_t *setup) {
         ep_set_tx_stat(3, USB_STAT_NAK);
         ep_set_rx_stat(3, USB_STAT_VALID);
         cdc_tx_busy = 0;
+        cdc_rx_pending = 0;
         ep0_send_zlp();
         break;
     case 0x08:
@@ -2225,6 +2267,7 @@ static void usb_reset_core(void) {
     cdc_tx_head = 0;
     cdc_tx_tail = 0;
     cdc_tx_busy = 0;
+    cdc_rx_pending = 0;
 }
 
 void usb_msc_init(void) {
@@ -2286,6 +2329,7 @@ void usb_msc_set_enabled(uint8_t enabled) {
     RCC_APB2ENR &= ~(1u << 22);
     usb_ready = 0;
     usb_configured = 0;
+    cdc_rx_pending = 0;
     msc_state = MSC_IDLE;
 }
 
@@ -2295,6 +2339,7 @@ void usb_msc_poll(void) {
     if (!usb_ready) {
         return;
     }
+    cdc_poll_command();
 
     if (raw_update_scan_pending && !raw_update_streaming && !msc_update_candidate) {
         if (msc_update_idle_ms < MSC_UPDATE_IDLE_APPLY_MS) {
@@ -2386,15 +2431,7 @@ void USB_LP_CAN1_RX0_IRQHandler(void) {
                 }
             } else if (ep == 3) {
                 if (reg & USB_EP_CTR_RX) {
-                    uint16_t rx_len = pma_get_rx_count(3);
-                    uint8_t cmd_buf[32];
-                    if (rx_len > 0 && rx_len < sizeof(cmd_buf)) {
-                        pma_read(USB_EP3_RX, cmd_buf, rx_len);
-                        cmd_buf[rx_len] = 0;
-                        handle_cdc_rx_command((const char *)cmd_buf);
-                    }
-                    ep_clear_rx_ctr(3);
-                    ep_set_rx_stat(3, USB_STAT_VALID);
+                    cdc_receive_command();
                 }
                 if (USB_EPR(3) & USB_EP_CTR_TX) {
                     ep_clear_tx_ctr(3);
