@@ -8035,13 +8035,15 @@ static void softkeys_flash(void) {
     softkeys_flash_for(SOFTKEY_FLASH_MS);
 }
 
-// Set from the USB command handler, acted on in ui_tick(): the capture
-// writes to the SPI flash and walks the FAT, which must not run from the
-// USB interrupt that received the command.
+// Set from the USB command handler, acted on in ui_tick(). The handler
+// already runs in the main loop, but it runs *inside* usb_msc_poll(), and
+// a capture re-enters usb_msc to take the storage and walk the FAT. Doing
+// that from within the poll would nest the storage state machine inside
+// itself; ui_tick() is the next moment where nothing else holds it.
 static uint8_t screenshot_requested;
 
-// Same reasoning for injected key events: ui_handle_keys() redraws, so it
-// runs from the main loop rather than the interrupt.
+// Same reasoning for injected key events: ui_handle_keys() can reach the
+// capture too, by way of a long press on SAVE.
 static uint32_t keys_injected;
 
 static void capture_screenshot_now(void) {
