@@ -653,10 +653,8 @@ static const char *const scope_vdivs_short[] = {
 static const char *const scope_vdivs_x10_short[] = {
     "200M", "500M", "1V", "2V", "5V", "10V", "20V", "50V", "100V",
 };
-// Shown on screen, split in two. The bottom bar gives each channel exactly
-// 96 pixels, which is eight characters at scale 2: "CH1 500M" fitted and
-// "CH1 500mV" does not. Drawing the unit at half size buys the character
-// back, and reads better besides -- the number is the part that changes.
+// Shown on screen, kept in two pieces so the bar can shrink the unit on
+// its own when the pair will not fit. See draw_scope_channel_range().
 static const char *const scope_vdiv_value[] = {
     "20", "50", "100", "200", "500", "1", "2", "5", "10",
 };
@@ -1666,6 +1664,37 @@ static void scope_vdiv_display(uint8_t idx, const char **value, const char **uni
     }
 }
 
+enum {
+    // What the bottom bar has for one channel before the next field
+    // starts. Eight characters at scale 2, and no wrapping: a range that
+    // overflows writes over the timebase beside it.
+    SCOPE_RANGE_FIELD_W = 96,
+};
+
+// One channel's range in the bottom bar. "CH1 2V" fits at full size,
+// "CH1 500mV" does not, so the unit drops to half size -- but only when
+// it has to: a lone "V" at half size reads as a lower case v.
+static void draw_scope_channel_range(uint16_t x, uint16_t y, const char *name,
+                                     uint8_t idx, uint16_t color, uint16_t bg) {
+    char text[12];
+    const char *value;
+    const char *unit;
+
+    scope_vdiv_display(idx, &value, &unit);
+    scope_text_copy(text, name, sizeof(text));
+    ui_text_append(text, " ", sizeof(text));
+    ui_text_append(text, value, sizeof(text));
+    if (lcd_text_width(text, 2) + lcd_text_width(unit, 2) <= SCOPE_RANGE_FIELD_W) {
+        ui_text_append(text, unit, sizeof(text));
+        lcd_text(x, y, text, color, bg, 2);
+        return;
+    }
+    lcd_text(x, y, text, color, bg, 2);
+    // Sat on the digits' own baseline: they stop two rows short of the
+    // bottom of the cell, so a unit hung off the cell would sit low.
+    lcd_text((uint16_t)(x + lcd_text_width(text, 2)), (uint16_t)(y + 5u), unit, color, bg, 1);
+}
+
 static const char *scope_vdiv_menu_label(void) {
     static char label[8];
     const char *value;
@@ -1688,36 +1717,14 @@ static const char *scope_vdiv_chip_label_for_channel(uint8_t idx) {
 }
 
 static void draw_scope_scale_status(uint16_t y, uint16_t bg) {
-    char ch1[10];
-    char ch2[10];
-
     if (scope_ch_enabled[0]) {
-        const char *value;
-        const char *unit;
-        scope_vdiv_display(0, &value, &unit);
-        ch1[0] = 'C';
-        ch1[1] = 'H';
-        ch1[2] = '1';
-        ch1[3] = ' ';
-        scope_text_copy(&ch1[4], value, 6);
-        lcd_text(0, y, ch1, C_CH1, bg, 2);
-        // The small unit sits on the same baseline as the big digits.
-        lcd_text(lcd_text_width(ch1, 2), (uint16_t)(y + 7u), unit, C_CH1, bg, 1);
+        draw_scope_channel_range(0, y, "CH1", 0, C_CH1, bg);
     }
     lcd_text_center(96, y, 72, scope_timebase_label(), C_TEXT, bg, 2);
     lcd_text_center(168, y, 56, ui.running ? (scope_slow_roll_active() ? "ROLL" : "RUN") : "HOLD",
                     ui.running ? C_DMM : C_WARN, bg, 2);
     if (scope_ch_enabled[1]) {
-        const char *value;
-        const char *unit;
-        scope_vdiv_display(1, &value, &unit);
-        ch2[0] = 'C';
-        ch2[1] = 'H';
-        ch2[2] = '2';
-        ch2[3] = ' ';
-        scope_text_copy(&ch2[4], value, 6);
-        lcd_text(224, y, ch2, C_CH2, bg, 2);
-        lcd_text((uint16_t)(224u + lcd_text_width(ch2, 2)), (uint16_t)(y + 7u), unit, C_CH2, bg, 1);
+        draw_scope_channel_range(224, y, "CH2", 1, C_CH2, bg);
     }
 }
 

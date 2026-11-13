@@ -326,6 +326,16 @@ static void test_display_units_are_si(void) {
 // The scope ranges have the multimeter's problem and the same cure: one
 // spelling for the host, which has parsed "500M" since before any of this,
 // and one for the eye, which reads "500M" as five hundred megavolts.
+// What draw_scope_channel_range() ends up occupying: the whole label at
+// scale 2 when it fits, otherwise the number at scale 2 and the unit at
+// scale 1 beside it.
+static unsigned range_field_width(const char *value, const char *unit) {
+    unsigned number = (4u + (unsigned)strlen(value)) * 12u;
+    unsigned full = number + (unsigned)strlen(unit) * 12u;
+
+    return full <= SCOPE_RANGE_FIELD_W ? full : number + (unsigned)strlen(unit) * 6u;
+}
+
 static void test_scope_ranges_are_readable(void) {
     const uint8_t *blank = font5x7_get(1);
     unsigned count = sizeof(scope_vdivs_short) / sizeof(scope_vdivs_short[0]);
@@ -346,14 +356,15 @@ static void test_scope_ranges_are_readable(void) {
                 assert(font5x7_get(*c) != blank);
             }
         }
-        // The bottom bar gives each channel 96 pixels and the timebase
-        // starts immediately after, so a range that overflows does not
-        // wrap -- it writes over the field beside it. "CH1 " and the
-        // value are scale 2 at 12 pixels a character, the unit scale 1.
-        assert((4u + strlen(scope_vdiv_value[i])) * 12u +
-               strlen(scope_vdiv_unit[i]) * 6u <= 96u);
-        assert((4u + strlen(scope_vdiv_x10_value[i])) * 12u +
-               strlen(scope_vdiv_x10_unit[i]) * 6u <= 96u);
+        // The bottom bar gives each channel SCOPE_RANGE_FIELD_W pixels
+        // and the timebase starts immediately after, so a range that
+        // overflows does not wrap -- it writes over the field beside it.
+        // The bar draws the unit at full size when the pair fits and at
+        // half size otherwise, so the narrower of the two has to fit.
+        assert(range_field_width(scope_vdiv_value[i], scope_vdiv_unit[i]) <=
+               SCOPE_RANGE_FIELD_W);
+        assert(range_field_width(scope_vdiv_x10_value[i], scope_vdiv_x10_unit[i]) <=
+               SCOPE_RANGE_FIELD_W);
     }
 
     // The version string is shown as written, lower case v and all.
