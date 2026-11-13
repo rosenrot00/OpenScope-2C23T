@@ -11019,3 +11019,62 @@ void ui_scope_step_vdiv(uint8_t ch, int8_t dir) {
         ui_render_mode_content();
     }
 }
+
+// Remote generator control. These apply from any screen so the output can be
+// driven while the scope stays on screen and keeps streaming telemetry.
+// gen_apply() runs gen_prepare_state() first, which clamps every field.
+static void ui_gen_refresh(void) {
+    if (ui.mode == UI_MODE_GEN) {
+        ui.running = gen_running;
+        ui_render_mode_content();
+    }
+}
+
+void ui_gen_set_output(uint8_t run) {
+    gen_running = run ? 1u : 0u;
+    gen_apply();
+    ui_gen_refresh();
+}
+
+void ui_gen_set_frequency(uint32_t hz) {
+    ui.gen_freq_hz = hz;
+    gen_apply();
+    ui_gen_refresh();
+}
+
+void ui_gen_set_wave(uint8_t wave) {
+    if (wave >= SIGGEN_WAVE_COUNT) {
+        return;
+    }
+    ui.gen_wave = wave;
+    gen_apply();
+    ui_gen_refresh();
+}
+
+void ui_gen_set_amplitude(uint8_t tenths_v) {
+    ui.gen_amp_tenths_v = tenths_v;
+    gen_apply();
+    ui_gen_refresh();
+}
+
+void ui_gen_set_duty(uint8_t duty_percent) {
+    ui.gen_duty_percent = duty_percent;
+    gen_apply();
+    ui_gen_refresh();
+}
+
+uint8_t ui_gen_is_running(void) {
+    return gen_running;
+}
+
+uint32_t ui_gen_frequency(void) {
+    return ui.gen_freq_hz;
+}
+
+uint8_t ui_gen_wave(void) {
+    return ui.gen_wave;
+}
+
+uint8_t ui_gen_amplitude(void) {
+    return ui.gen_amp_tenths_v;
+}

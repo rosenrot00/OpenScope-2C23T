@@ -383,6 +383,67 @@ static void test_generator_resumes_after_dmm(void) {
     assert_zero_output();
 }
 
+// Remote (USB) generator control must work from any screen, so that the
+// output can be driven while the scope keeps streaming its telemetry.
+static void test_remote_generator_control(void) {
+    setup();
+    ui_switch_mode(UI_MODE_SCOPE);
+    assert(ui.mode == UI_MODE_SCOPE);
+
+    // Stopped: no output is configured.
+    ui_gen_set_output(0);
+    assert(!ui_gen_is_running());
+
+    ui_gen_set_output(1);
+    assert(ui_gen_is_running());
+    assert(ui.mode == UI_MODE_SCOPE);  // the screen must not switch
+
+    // setup() already left the generator at 1 kHz, so ask for a new value:
+    // siggen_configure() deliberately skips identical reconfigurations.
+    unsigned timing_before = timing_writes;
+    ui_gen_set_frequency(1500u);
+    assert(ui_gen_frequency() == 1500u);
+    assert(timing_writes > timing_before);
+    uint32_t word_1500 = tuning_word;
+
+    // The tuning word must track the requested frequency.
+    ui_gen_set_frequency(3000u);
+    assert(ui_gen_frequency() == 3000u);
+    assert(tuning_word == 2u * word_1500);
+
+    // Out-of-range values are clamped by gen_prepare_state().
+    ui_gen_set_frequency(0u);
+    assert(ui_gen_frequency() >= 1u);
+    ui_gen_set_frequency(50000000u);
+    assert(ui_gen_frequency() <= GEN_MAX_FREQ_HZ);
+
+    // Waveform selection reloads the FPGA sample buffer.
+    ui_gen_set_frequency(1000u);
+    unsigned buffers_before = buffer_writes;
+    ui_gen_set_wave(SIGGEN_WAVE_SQUARE);
+    assert(ui_gen_wave() == SIGGEN_WAVE_SQUARE);
+    assert(buffer_writes > buffers_before);
+    ui_gen_set_wave(SIGGEN_WAVE_SINE);
+    assert(ui_gen_wave() == SIGGEN_WAVE_SINE);
+
+    // An unknown waveform index is rejected outright.
+    ui_gen_set_wave(SIGGEN_WAVE_COUNT);
+    assert(ui_gen_wave() == SIGGEN_WAVE_SINE);
+
+    // Amplitude is clamped to the hardware range (0.1 V .. 3.3 V).
+    ui_gen_set_amplitude(33u);
+    assert(ui_gen_amplitude() == 33u);
+    ui_gen_set_amplitude(200u);
+    assert(ui_gen_amplitude() <= 33u);
+    ui_gen_set_amplitude(0u);
+    assert(ui_gen_amplitude() >= 1u);
+
+    // Stopping must silence the output, and the screen still must not change.
+    ui_gen_set_output(0);
+    assert(!ui_gen_is_running());
+    assert(ui.mode == UI_MODE_SCOPE);
+}
+
 int main(void) {
     test_mode_switches();
     test_generator_resumes_after_dmm();
@@ -393,6 +454,7 @@ int main(void) {
     test_sweep_units();
     test_bode_units();
     test_settings_export();
-    printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership and waveforms passed (HW4=%d)\n", HW_TARGET_HW40);
+    test_remote_generator_control();
+    printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
 }
