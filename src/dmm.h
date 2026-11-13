@@ -18,6 +18,7 @@ int32_t dmm_value_milli_units(void);
 int32_t dmm_value_fixed_units(void);
 const char *dmm_value_text(void);
 const char *dmm_unit_text(void);
+uint8_t dmm_unit_is_fahrenheit(void);
 const char *dmm_status_text(void);
 const char *dmm_mode_name(void);
 uint8_t dmm_reading_is_real(void);

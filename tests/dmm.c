@@ -303,9 +303,15 @@ static void test_display_units_are_si(void) {
     // Unambiguous units pass through, and a null never crashes the display.
     assert(strcmp(dmm_unit_si_text("V"), "V") == 0);
     assert(strcmp(dmm_unit_si_text("A"), "A") == 0);
-    // Temperature is shown as a degree sign plus C; the font carries the
-    // degree sign on '~', which is why the unit is spelled that way.
+    // Temperature is shown as a degree sign plus the scale; the font carries
+    // the degree sign on '~', which is why the unit is spelled that way.
+    // The chip sends "DEG" for both scales -- the flag is what tells them
+    // apart, so reading it wrong would label a Fahrenheit value as Celsius.
+    dmm_unit_fahrenheit = 0;
     assert(strcmp(dmm_unit_si_text("DEG"), "~C") == 0);
+    dmm_unit_fahrenheit = 1;
+    assert(strcmp(dmm_unit_si_text("DEG"), "~F") == 0);
+    dmm_unit_fahrenheit = 0;
     assert(strcmp(dmm_unit_si_text(NULL), "") == 0);
 
     // Every character these units are made of must have a glyph of its own.
@@ -316,11 +322,15 @@ static void test_display_units_are_si(void) {
         "MV", "MA", "UA", "NF", "UF", "MF", "OHM", "KOHM", "MOHM", "DEG",
     };
     const uint8_t *blank = font5x7_get(1);   // 1 has no glyph: the blank one
-    for (unsigned u = 0; u < sizeof(kUnits) / sizeof(kUnits[0]); ++u) {
-        for (const char *p = dmm_unit_si_text(kUnits[u]); *p; ++p) {
-            assert(font5x7_get(*p) != blank);
+    for (unsigned scale = 0; scale < 2u; ++scale) {
+        dmm_unit_fahrenheit = (uint8_t)scale;
+        for (unsigned u = 0; u < sizeof(kUnits) / sizeof(kUnits[0]); ++u) {
+            for (const char *p = dmm_unit_si_text(kUnits[u]); *p; ++p) {
+                assert(font5x7_get(*p) != blank);
+            }
         }
     }
+    dmm_unit_fahrenheit = 0;
 }
 
 // The scope ranges have the multimeter's problem and the same cure: one

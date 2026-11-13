@@ -99,6 +99,7 @@ int32_t dmm_value_milli_units(void) { return 0; }
 int32_t dmm_value_fixed_units(void) { return 0; }
 const char *dmm_value_text(void) { return ""; }
 const char *dmm_unit_text(void) { return ""; }
+uint8_t dmm_unit_is_fahrenheit(void) { return 0; }
 const char *dmm_status_text(void) { return ""; }
 uint8_t dmm_reading_is_real(void) { return 0; }
 void lcd_render(lcd_render_fn_t fn, void *ctx) { (void)fn; (void)ctx; }

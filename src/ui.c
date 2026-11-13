@@ -3974,8 +3974,9 @@ static const char *dmm_unit_si_text(const char *raw) {
     if (ui_text_equal(raw, "UF")) return "uF";
     if (ui_text_equal(raw, "MF")) return "mF";
     // Temperature. The font carries the degree sign on '~' (see font.c), so
-    // the screen can show 23.8 degC instead of the bare word DEG.
-    if (ui_text_equal(raw, "DEG")) return "~C";
+    // the screen can show 23.8 degC instead of the bare word DEG -- and which
+    // of the two scales it is, which "DEG" on its own cannot say.
+    if (ui_text_equal(raw, "DEG")) return dmm_unit_is_fahrenheit() ? "~F" : "~C";
     return raw;   // V, A and F are unambiguous as they stand
 }
 
