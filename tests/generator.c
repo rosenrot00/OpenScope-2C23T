@@ -443,6 +443,26 @@ static void test_full_render_clears_on_scene_change(void) {
     assert(full_scene_clear);
 }
 
+// A mode change asked for over USB has to repaint like the key-driven
+// shortcuts do. It did not, and the previous screen's title stayed on the
+// glass -- seen on the device as MULTIMETER content under an OSCILLOSCOPE
+// title, two seconds after the switch.
+static void test_remote_mode_change_repaints(void) {
+    setup();
+    ui_switch_mode(UI_MODE_SCOPE);
+    ui_render_job(UI_RENDER_FULL);
+
+    full_scene_clear = 0;
+    ui_set_main_mode(0);                 // DMM
+    assert(ui.mode == UI_MODE_DMM);
+    assert(full_scene_clear);            // the repaint happened, and cleared
+
+    // Asking again for the mode already shown must not repaint at all.
+    full_scene_clear = 0;
+    ui_set_main_mode(0);
+    assert(!full_scene_clear);
+}
+
 // Leading zeros are placeholders: the editors keep them in place so the
 // digit under edit never moves, but they must not read as loudly as the
 // digits that carry the value. The last place is never a placeholder.
@@ -588,6 +608,7 @@ int main(void) {
     test_settings_factory_reset();
     test_editor_leading_zeros();
     test_full_render_clears_on_scene_change();
+    test_remote_mode_change_repaints();
     test_remote_generator_control();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;

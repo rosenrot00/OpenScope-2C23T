@@ -11177,6 +11177,11 @@ void ui_set_main_mode(uint8_t mode) {
     if (mode >= 3u) mode = 0;
     if (ui.mode != mode) {
         ui_direct_mode(mode);
+        // Every key-driven shortcut repaints right here (KEY_MOVE_LONG and
+        // its neighbours). This one did not, so a mode change asked for
+        // over USB left the previous screen's title and measurements on the
+        // glass until something else happened to ask for a full render.
+        ui_render();
     }
 }
 
