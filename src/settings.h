@@ -95,3 +95,4 @@ void settings_note(const settings_state_t *settings);
 uint8_t settings_load_dmm_mode(uint8_t *mode);
 void settings_note_dmm_mode(uint8_t mode);
 void settings_flush(void);
+void settings_factory_reset(void);

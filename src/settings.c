@@ -964,3 +964,18 @@ void settings_flush(void) {
     settings_write(&settings_pending);
     settings_dirty = 0;
 }
+
+void settings_factory_reset(void) {
+    settings_state_t defaults;
+
+    // Write the defaults straight out rather than marking them dirty: a
+    // reset is immediately followed by a reboot, so there is no later flush
+    // to rely on, and the cached copy has to match what is in flash in case
+    // anything reads it in between.
+    settings_defaults(&defaults);
+    settings_clamp(&defaults);
+    settings_write(&defaults);
+    settings_copy(&settings_pending, &defaults);
+    settings_dirty = 0;
+    settings_loaded = 1;
+}

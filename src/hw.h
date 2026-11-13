@@ -26,6 +26,7 @@
 #define USB_PMA_BASE 0x40006000u
 #define FSMC_BASE   0xA0000000u
 #define SCB_VTOR    0xE000ED08u
+#define SCB_AIRCR   0xE000ED0Cu
 #define SYST_CSR    0xE000E010u
 #define SYST_RVR    0xE000E014u
 #define SYST_CVR    0xE000E018u

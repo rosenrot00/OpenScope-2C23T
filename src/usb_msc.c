@@ -1158,7 +1158,7 @@ static uint8_t raw_fat_write_screenshot_entry(const raw_fat_volume_t *fat,
     return raw_storage_write_bytes(dir_byte_addr, entry, sizeof(entry));
 }
 
-static uint8_t raw_fat_save_latest_screenshot(void) {
+static screenshot_save_t raw_fat_save_latest_screenshot(void) {
     raw_fat_volume_t fat;
     uint32_t dir_byte_addr = 0;
     uint32_t cluster_bytes;
@@ -1166,27 +1166,34 @@ static uint8_t raw_fat_save_latest_screenshot(void) {
     uint16_t file_index = 0;
 
     if (!raw_fat_mount(&fat) || fat.bytes_per_sector > MSC_SECTOR_SIZE) {
-        return 0;
+        return SCREENSHOT_SAVE_NO_VOLUME;
     }
 
     cluster_bytes = (uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster;
     if (!cluster_bytes) {
-        return 0;
+        return SCREENSHOT_SAVE_NO_VOLUME;
     }
     cluster_count = (uint16_t)((SCREENSHOT_FILE_SIZE + cluster_bytes - 1u) / cluster_bytes);
-    if (!cluster_count || cluster_count > SCREENSHOT_CLUSTER_COUNT ||
-        !raw_fat_find_screenshot_dir_entry(&fat, &dir_byte_addr, &file_index) ||
-        !raw_fat_find_free_clusters(&fat, cluster_count)) {
-        return 0;
+    if (!cluster_count || cluster_count > SCREENSHOT_CLUSTER_COUNT) {
+        return SCREENSHOT_SAVE_NO_VOLUME;
+    }
+    // Tell the two kinds of "full" apart. A drive with no free cluster left
+    // and a root directory with no free slot both stop the save dead, and
+    // both used to reach the screen as the same bare error.
+    if (!raw_fat_find_screenshot_dir_entry(&fat, &dir_byte_addr, &file_index)) {
+        return SCREENSHOT_SAVE_NO_SLOT;
+    }
+    if (!raw_fat_find_free_clusters(&fat, cluster_count)) {
+        return SCREENSHOT_SAVE_FULL;
     }
 
     if (!raw_fat_link_clusters(&fat, cluster_count) ||
         !raw_fat_write_screenshot_chain(&fat, raw_screenshot_clusters[0]) ||
         !raw_fat_write_screenshot_entry(&fat, dir_byte_addr, file_index)) {
-        return 0;
+        return SCREENSHOT_SAVE_ERROR;
     }
     msc_unit_attention = 1;
-    return 1;
+    return SCREENSHOT_SAVE_OK;
 }
 
 uint8_t usb_msc_storage_begin(void) {
@@ -1209,15 +1216,66 @@ void usb_msc_storage_end(void) {
     }
 }
 
+screenshot_save_t usb_msc_save_screenshot(void) {
+    screenshot_save_t result;
+
+    if (!usb_msc_storage_begin()) {
+        return SCREENSHOT_SAVE_BUSY;
+    }
+    result = raw_fat_save_latest_screenshot();
+    usb_msc_storage_end();
+    return result;
+}
+
 uint8_t usb_msc_store_screenshot(void) {
-    uint8_t ok;
+    return usb_msc_save_screenshot() == SCREENSHOT_SAVE_OK ? 1u : 0u;
+}
+
+// Free space on the capture drive, in whole kilobytes. The FAT is walked
+// entry by entry because nothing on this volume keeps a free count: the
+// FAT12 table here is 3 KiB, so the scan is a single flash read, and it is
+// only ever asked for when the settings page opens.
+uint8_t usb_msc_storage_free_kb(uint32_t *free_kb, uint32_t *total_kb) {
+    raw_fat_volume_t fat;
+    uint32_t last_cluster;
+    uint32_t cluster_bytes;
+    uint32_t free_clusters = 0;
+    uint32_t total_clusters;
 
     if (!usb_msc_storage_begin()) {
         return 0;
     }
-    ok = raw_fat_save_latest_screenshot();
+    if (!raw_fat_mount(&fat) || fat.bytes_per_sector > MSC_SECTOR_SIZE) {
+        usb_msc_storage_end();
+        return 0;
+    }
+    total_clusters = raw_fat_cluster_count(&fat);
+    cluster_bytes = (uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster;
+    last_cluster = total_clusters + 1u;
+    for (uint32_t cluster = 2; cluster <= last_cluster; ++cluster) {
+        uint32_t value;
+        if (!raw_fat_next_cluster(&fat, cluster, &value)) {
+            usb_msc_storage_end();
+            return 0;
+        }
+        if (!value) {
+            ++free_clusters;
+        }
+    }
     usb_msc_storage_end();
-    return ok;
+    if (!cluster_bytes) {
+        return 0;
+    }
+    // Clusters first, bytes second: 2048 clusters of 4 KiB overflow nothing
+    // this way, and the division is exact because the cluster size is a
+    // power of two at least as large as a kilobyte.
+    if (free_kb) {
+        *free_kb = free_clusters * (cluster_bytes / 1024u);
+    }
+    if (total_kb) {
+        *total_kb = total_clusters * (cluster_bytes / 1024u);
+    }
+    return 1;
 }
 
 static uint8_t buf_equal(const uint8_t *a, const uint8_t *b, uint16_t len) {

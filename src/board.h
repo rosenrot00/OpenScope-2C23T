@@ -39,6 +39,7 @@ void power_key_exti_init(void);
 void power_key_irq_handler(void);
 uint8_t board_power_off_requested(void);
 void board_power_off(void);
+void board_reboot(void);
 void board_backlight_set(uint8_t on);
 void board_backlight_set_level(uint8_t percent);
 void board_buzzer_init(void);
