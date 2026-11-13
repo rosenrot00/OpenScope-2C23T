@@ -398,6 +398,28 @@ static void test_generator_resumes_after_dmm(void) {
     assert_zero_output();
 }
 
+// Leading zeros are placeholders: the editors keep them in place so the
+// digit under edit never moves, but they must not read as loudly as the
+// digits that carry the value. The last place is never a placeholder.
+static void test_editor_leading_zeros(void) {
+    assert(editor_dim_digits("0001", 4) == 3);
+    assert(editor_dim_digits("4999", 4) == 0);
+    assert(editor_dim_digits("0500", 4) == 1);
+    assert(editor_dim_digits("0000", 4) == 3);   // one solid 0 is left
+    assert(editor_dim_digits("0", 1) == 0);
+    assert(editor_dim_digits(0, 4) == 0);
+
+    // The faded colour has to sit between the text and its background,
+    // channel by channel, or it would stand out rather than recede.
+    uint16_t fg = RGB565(255, 255, 255);
+    uint16_t bg = RGB565(30, 30, 45);
+    uint16_t dim = color_mix(fg, bg);
+    assert((dim >> 11) < (fg >> 11) && (dim >> 11) > (bg >> 11));
+    assert(((dim >> 5) & 0x3Fu) < ((fg >> 5) & 0x3Fu));
+    assert(((dim >> 5) & 0x3Fu) > ((bg >> 5) & 0x3Fu));
+    assert(color_mix(fg, fg) == fg);
+}
+
 // A factory reset throws away the calibration as well as the preferences,
 // so it may only happen on a deliberate, confirmed press -- never on AUTO,
 // and never on the key repeat of the press that opened the confirmation.
@@ -519,6 +541,7 @@ int main(void) {
     test_bode_units();
     test_settings_export();
     test_settings_factory_reset();
+    test_editor_leading_zeros();
     test_remote_generator_control();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
