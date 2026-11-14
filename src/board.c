@@ -135,6 +135,18 @@ void board_power_off(void) {
     }
 }
 
+void board_reboot(void) {
+    // AIRCR ignores a reset request that does not carry the VECTKEY.
+    // Rebooting is the only honest way to apply settings that have been
+    // rewritten underneath a running interface: half the live state lives
+    // in static variables that ui_init() seeds once and never re-reads.
+    __asm__ volatile("dsb" ::: "memory");
+    REG32(SCB_AIRCR) = 0x05FA0004u;
+    __asm__ volatile("dsb" ::: "memory");
+    while (1) {
+    }
+}
+
 static uint16_t percent_to_timer_compare(uint8_t percent, uint16_t max_compare) {
     if (percent > 100u) {
         percent = 100u;

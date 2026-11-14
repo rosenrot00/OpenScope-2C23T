@@ -170,6 +170,11 @@ typedef struct {
     uint8_t sleep_due;
     uint8_t dmm_render_pending;
     uint8_t screenshot_state;
+    uint8_t screenshot_reason;
+    uint8_t reset_confirm;
+    uint8_t storage_known;
+    uint32_t storage_free_kb;
+    uint32_t storage_total_kb;
     uint8_t boot_export_state;
     uint8_t boot_export_result;
     uint8_t boot_export_percent;
@@ -485,9 +490,19 @@ enum {
     SCOPE_STUB_FRAME_MS = 90,
     DMM_FAST_RENDER_MS = 80,
     DMM_STATS_ZERO_RESET_SAMPLES = 8,
-    SETTINGS_ROW_COUNT = 6,
-    SETTINGS_SELECTABLE_COUNT = 5,
-    SETTINGS_BOOT_EXPORT_ROW = 4,
+    // The settings page is a 3-wide grid of tiles with one wide tile on the
+    // last line. INFO is that wide tile: it is read-only, so it sits past
+    // the selectable rows and the cursor simply never reaches it.
+    SETTINGS_ROW_BEEP = 0,
+    SETTINGS_ROW_DISPLAY = 1,
+    SETTINGS_ROW_START = 2,
+    SETTINGS_ROW_SLEEP = 3,
+    SETTINGS_ROW_BOOT_EXPORT = 4,
+    SETTINGS_ROW_RESET = 5,
+    SETTINGS_ROW_INFO = 6,
+    SETTINGS_ROW_COUNT = 7,
+    SETTINGS_SELECTABLE_COUNT = SETTINGS_ROW_INFO,
+    SETTINGS_BOOT_EXPORT_ROW = SETTINGS_ROW_BOOT_EXPORT,
     SETTINGS_GRID_COLUMNS = 3,
     GEN_PREVIEW_CYCLES = 3,
     GEN_DEFERRED_APPLY_MS = 100,
@@ -699,7 +714,9 @@ static const uint8_t gen_wave_order[] = {
 };
 static const char *const gen_param_labels[] = {"WAVE", "FREQ", "DUTY", "AMP"};
 static const char *const menu_labels[] = {"MULTIMETER", "OSCILLOSCOPE", "SIGNAL GENERATOR", "SETTINGS"};
-static const char *const settings_row_labels[] = {"BEEP", "DISPLAY", "START", "SLEEP", "BOOTLOADER", "INFO"};
+static const char *const settings_row_labels[] = {
+    "BEEP", "DISPLAY", "START", "SLEEP", "BOOTLOADER", "RESET", "INFO",
+};
 static const char *const startup_labels[] = {"MENU", "DMM", "SCOPE", "GEN"};
 static const char *const beep_level_labels[] = {"OFF", "LOW", "MEDIUM", "HIGH", "MAX"};
 static const char *const brightness_level_labels[] = {"DIM", "LOW", "MEDIUM", "HIGH", "BRIGHT"};
@@ -1250,7 +1267,26 @@ static void draw_screenshot_overlay(uint16_t bg) {
     } else if (ui.screenshot_state == SCREENSHOT_STATE_OK) {
         lcd_text_center(x, (uint16_t)(y + 38u), w, "SAVED TO USB", box_fg, box_bg, 1);
     } else {
-        lcd_text_center(x, (uint16_t)(y + 38u), w, "SAVE ERROR", box_fg, box_bg, 1);
+        // Say which failure it was. A full drive is the only one the user
+        // can do anything about, so it gets the line that says what to do.
+        const char *reason = "SAVE ERROR";
+        const char *hint = 0;
+        if (ui.screenshot_reason == SCREENSHOT_SAVE_FULL) {
+            reason = "DRIVE FULL";
+            hint = "DELETE IMG FILES FROM THE PC";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_SLOT) {
+            reason = "TOO MANY FILES";
+            hint = "DELETE IMG FILES FROM THE PC";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_BUSY) {
+            reason = "DRIVE BUSY";
+            hint = "THE PC IS READING IT - RETRY";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_VOLUME) {
+            reason = "NO USB DRIVE";
+        }
+        lcd_text_center(x, (uint16_t)(y + 36u), w, reason, box_fg, box_bg, 1);
+        if (hint) {
+            lcd_text_center(x, (uint16_t)(y + 50u), w, hint, box_fg, box_bg, 1);
+        }
     }
     (void)bg;
 }
@@ -7207,7 +7243,51 @@ static const char *settings_value_text(uint8_t row, char out[12]) {
     if (row == SETTINGS_BOOT_EXPORT_ROW) {
         return "EXPORT";
     }
+    if (row == SETTINGS_ROW_RESET) {
+        return "DEFAULTS";
+    }
     return FIRMWARE_VERSION_TEXT;
+}
+
+// The revision decides which binary may be flashed, and until now the only
+// way to tell was to open the case. HW4.0 drives a Gowin FPGA, everything
+// before it an AGM part, and the two builds are not interchangeable.
+static const char *hardware_revision_text(void) {
+#if HW_TARGET_HW40
+    return "HW4.0";
+#else
+    return "HW3.x";
+#endif
+}
+
+// Free space on the capture drive, read once when the page opens. Walking
+// the FAT takes a flash read and locks the host out of the drive for its
+// duration, so it is not something to do on every frame.
+static void settings_refresh_storage(void) {
+    uint32_t free_kb = 0;
+    uint32_t total_kb = 0;
+
+    ui.storage_known = usb_msc_storage_free_kb(&free_kb, &total_kb);
+    ui.storage_free_kb = free_kb;
+    ui.storage_total_kb = total_kb;
+}
+
+static void settings_storage_text(char out[20]) {
+    char number[12];
+
+    if (!ui.storage_known || !ui.storage_total_kb) {
+        ui_text_copy(out, "STORAGE --", 20);
+        return;
+    }
+    ui_text_copy(out, "FREE ", 20);
+    // Megabytes with one decimal: the drive is 8 MB, so kilobytes would be
+    // five digits of noise and plain megabytes would read 0 when it counts.
+    scope_format_u32(number, ui.storage_free_kb / 1024u);
+    ui_text_append(out, number, 20);
+    ui_text_append(out, ".", 20);
+    scope_format_u32(number, ((ui.storage_free_kb % 1024u) * 10u) / 1024u);
+    ui_text_append(out, number, 20);
+    ui_text_append(out, " MB", 20);
 }
 
 enum {
@@ -7254,6 +7334,20 @@ static void draw_boot_export_overlay(void) {
     }
 }
 
+static void draw_settings_reset_overlay(void) {
+    uint16_t bg = RGB565(64, 24, 28);
+
+    if (ui.overlay != UI_OVERLAY_SETTINGS || !ui.reset_confirm) {
+        return;
+    }
+    lcd_rect(22, 66, 276, 110, bg);
+    lcd_frame(22, 66, 276, 110, C_WARN);
+    lcd_text_center(22, 80, 276, "FACTORY RESET", C_TEXT, bg, 2);
+    lcd_text_center(22, 112, 276, "ALL SETTINGS AND CALIBRATION", C_TEXT, bg, 1);
+    lcd_text_center(22, 126, 276, "WILL BE LOST - CAPTURES ARE KEPT", C_TEXT, bg, 1);
+    lcd_text_center(22, 146, 276, "PLAY: RESET   MENU: CANCEL", C_TEXT, bg, 1);
+}
+
 static void draw_settings_tile(uint8_t row, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
     char value[12];
     uint8_t selectable = row < SETTINGS_SELECTABLE_COUNT;
@@ -7270,6 +7364,21 @@ static void draw_settings_tile(uint8_t row, uint16_t x, uint16_t y, uint16_t w, 
     lcd_frame(x, y, w, h, selected ? accent : C_GRID);
     lcd_rect(x, y, w, 4, accent);
     lcd_text((uint16_t)(x + 8u), (uint16_t)(y + 8u), settings_row_labels[row], label_color, bg, 1);
+    if (row == SETTINGS_ROW_INFO) {
+        // The wide tile has room for what the small ones never did: the
+        // firmware version, the hardware revision that says which binary
+        // belongs on this unit, and how much of the drive is left.
+        char storage[20];
+        settings_storage_text(storage);
+        // Laid out left to right rather than centred: a centred revision
+        // would run into a version string one character longer.
+        lcd_text((uint16_t)(x + 8u), (uint16_t)(y + 22u), FIRMWARE_VERSION_TEXT, C_TEXT, bg, 2);
+        lcd_text((uint16_t)(x + 150u), (uint16_t)(y + 22u), hardware_revision_text(),
+                 menu_item_color(3), bg, 2);
+        lcd_text((uint16_t)(x + w - 8u - lcd_text_width(storage, 1)),
+                 (uint16_t)(y + 26u), storage, C_MUTED, bg, 1);
+        return;
+    }
     lcd_text_center(x, value_y, w, value_text, value_color, bg, value_scale);
     if (selected) {
         lcd_rect((uint16_t)(x + 10u), (uint16_t)(y + h - 7u), (uint16_t)(w - 20u), 3, accent);
@@ -7281,15 +7390,19 @@ static void draw_settings_menu(void) {
     draw_battery_status_overlay(C_BG);
 
     lcd_text(14, 18, "SETTINGS", C_TEXT, C_BG, 3);
-    for (uint8_t row = 0; row < SETTINGS_ROW_COUNT; ++row) {
+    // Two lines of three tiles, then INFO across the full width. The tiles
+    // lost eight pixels of height to make room for the third line; the
+    // label, the value and the selection bar all still fit.
+    for (uint8_t row = 0; row < SETTINGS_ROW_INFO; ++row) {
         uint8_t col = (uint8_t)(row % SETTINGS_GRID_COLUMNS);
         uint8_t line = (uint8_t)(row / SETTINGS_GRID_COLUMNS);
         draw_settings_tile(row,
                            (uint16_t)(8u + col * 105u),
-                           (uint16_t)(72u + line * 66u),
+                           (uint16_t)(64u + line * 58u),
                            98,
-                           56);
+                           52);
     }
+    draw_settings_tile(SETTINGS_ROW_INFO, 8, 180, 303, 48);
 }
 
 typedef enum {
@@ -7437,6 +7550,7 @@ static void ui_render_dispatch(void *ctx) {
         draw_fw_update_overlay(C_BG);
         draw_screenshot_overlay(C_BG);
         draw_boot_export_overlay();
+        draw_settings_reset_overlay();
         return;
     }
     if (current_render_job == UI_RENDER_MODE_CONTENT) {
@@ -7927,17 +8041,35 @@ static void capture_screenshot_now(void) {
     ui.screenshot_overlay_ms = SCREENSHOT_OVERLAY_MS;
     draw_screenshot_overlay(C_BG);
 
-    uint8_t saved = usb_msc_store_screenshot();
+    screenshot_save_t saved = usb_msc_save_screenshot();
 
-    ui.screenshot_state = saved ? SCREENSHOT_STATE_OK : SCREENSHOT_STATE_ERROR;
+    ui.screenshot_reason = (uint8_t)saved;
+    ui.screenshot_state = saved == SCREENSHOT_SAVE_OK ? SCREENSHOT_STATE_OK : SCREENSHOT_STATE_ERROR;
     ui.screenshot_overlay_ms = SCREENSHOT_OVERLAY_MS;
+    // The drive just changed. The settings page caches what it last read,
+    // so re-read it now rather than leave it showing "--" until the page
+    // is closed and opened again.
+    ui.storage_known = 0;
+    if (ui.overlay == UI_OVERLAY_SETTINGS) {
+        settings_refresh_storage();
+    }
     ui_render();
 
     // A host that asked for the capture has no other way of knowing the file
     // was written: the drive is not mounted while the device owns it.
     if (usb_cdc_is_configured()) {
-        if (saved) {
+        // The reason is appended after ERR rather than replacing it, so a
+        // host that only looks for "$SHOT,ERR" keeps working.
+        if (saved == SCREENSHOT_SAVE_OK) {
             usb_cdc_send_bytes((const uint8_t *)"$SHOT,OK\r\n", 10);
+        } else if (saved == SCREENSHOT_SAVE_FULL) {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR,FULL\r\n", 16);
+        } else if (saved == SCREENSHOT_SAVE_NO_SLOT) {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR,DIRFULL\r\n", 19);
+        } else if (saved == SCREENSHOT_SAVE_BUSY) {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR,BUSY\r\n", 16);
+        } else if (saved == SCREENSHOT_SAVE_NO_VOLUME) {
+            usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR,NOFS\r\n", 16);
         } else {
             usb_cdc_send_bytes((const uint8_t *)"$SHOT,ERR\r\n", 11);
         }
@@ -9621,7 +9753,7 @@ static void settings_adjust_current(int8_t dir) {
         board_backlight_set_level(brightness_level_percent[ui_settings.brightness_level]);
     } else if (ui.settings_row == 2u) {
         settings_cycle_startup(dir);
-    } else if (ui.settings_row == 3u) {
+    } else if (ui.settings_row == SETTINGS_ROW_SLEEP) {
         cycle_u8(&ui_settings.sleep_enabled, SETTINGS_SLEEP_COUNT, dir);
         ui.sleep_ms = 0;
         ui.sleep_due = 0;
@@ -9736,6 +9868,8 @@ static void ui_open_mode_menu_item(uint8_t index) {
     } else {
         ui.overlay = UI_OVERLAY_SETTINGS;
         ui.settings_row = 0;
+        ui.reset_confirm = 0;
+        settings_refresh_storage();
     }
 }
 
@@ -9811,6 +9945,22 @@ static void ui_handle_menu_keys(uint32_t events) {
         ui_render();
         return;
     }
+    if (ui.reset_confirm) {
+        if (events & KEY_REPEAT) {
+            return;
+        }
+        if (events & KEY_MENU) {
+            ui.reset_confirm = 0;
+            ui_render();
+        } else if (events & KEY_OK) {
+            settings_factory_reset();
+            // Reboot rather than try to unwind the live state by hand:
+            // ui_init() reads the settings once into static variables that
+            // nothing else re-reads, so only a restart is honest here.
+            board_reboot();
+        }
+        return;
+    }
     ui.boot_export_state = BOOT_EXPORT_UI_NONE;
     ui.boot_export_overlay_ms = 0;
 
@@ -9846,6 +9996,10 @@ static void ui_handle_menu_keys(uint32_t events) {
         if (ui.settings_row == SETTINGS_BOOT_EXPORT_ROW) {
             if (events & KEY_OK) {
                 ui.boot_export_state = BOOT_EXPORT_UI_CONFIRM;
+            }
+        } else if (ui.settings_row == SETTINGS_ROW_RESET) {
+            if (events & KEY_OK) {
+                ui.reset_confirm = 1;
             }
         } else {
             settings_adjust_current(1);

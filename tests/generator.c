@@ -52,6 +52,15 @@ void scope_hw_configure_channels(uint8_t tb, uint8_t r0, uint8_t r1,
 void scope_hw_arm(void) {}
 void scope_hw_set_offsets(uint16_t ch1_dac, uint16_t ch2_dac) { (void)ch1_dac; (void)ch2_dac; }
 uint8_t usb_msc_store_screenshot(void) { return 0; }
+screenshot_save_t usb_msc_save_screenshot(void) { return SCREENSHOT_SAVE_ERROR; }
+uint8_t usb_msc_storage_free_kb(uint32_t *free_kb, uint32_t *total_kb) {
+    (void)free_kb; (void)total_kb;
+    return 0;
+}
+static unsigned reboots;
+static unsigned factory_resets;
+void board_reboot(void) { ++reboots; }
+void settings_factory_reset(void) { ++factory_resets; }
 uint8_t usb_cdc_is_configured(void) { return 0; }
 void usb_cdc_send_bytes(const uint8_t *data, uint16_t len) { (void)data; (void)len; }
 void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid) {
@@ -328,8 +337,13 @@ static void test_settings_export(void) {
     ui.overlay = UI_OVERLAY_SETTINGS;
     ui.settings_row = SETTINGS_BOOT_EXPORT_ROW;
     ui.boot_export_state = BOOT_EXPORT_UI_NONE;
-    assert(SETTINGS_BOOT_EXPORT_ROW == SETTINGS_ROW_COUNT - 2u);
-    assert(!strcmp(settings_row_labels[SETTINGS_ROW_COUNT - 1u], "INFO"));
+    // INFO is the wide read-only tile on the bottom line. It has to stay
+    // out of the cursor's reach, which is the whole job of keeping it past
+    // SETTINGS_SELECTABLE_COUNT, and it has to be the last row drawn.
+    assert(SETTINGS_SELECTABLE_COUNT == SETTINGS_ROW_INFO);
+    assert(SETTINGS_ROW_COUNT == SETTINGS_ROW_INFO + 1u);
+    assert(!strcmp(settings_row_labels[SETTINGS_ROW_INFO], "INFO"));
+    assert(!strcmp(settings_row_labels[SETTINGS_ROW_RESET], "RESET"));
     ui_handle_menu_keys(KEY_AUTO);
     assert(ui.boot_export_state == BOOT_EXPORT_UI_NONE && !boot_exports);
     ui_handle_menu_keys(KEY_OK);
@@ -343,10 +357,10 @@ static void test_settings_export(void) {
     assert(boot_exports == 1 && ui.boot_export_state == BOOT_EXPORT_UI_RESULT);
     assert(ui.boot_export_result == BOOT_EXPORT_OK && ui.boot_export_percent == 100);
     ui_handle_menu_keys(KEY_RIGHT);
-    assert(ui.settings_row == 0 && ui.boot_export_state == BOOT_EXPORT_UI_NONE);
+    assert(ui.settings_row == SETTINGS_ROW_RESET && ui.boot_export_state == BOOT_EXPORT_UI_NONE);
     for (uint8_t i = 0; i < SETTINGS_SELECTABLE_COUNT; ++i) {
         ui_handle_menu_keys(KEY_RIGHT);
-        assert(ui.settings_row < SETTINGS_ROW_COUNT - 1u);
+        assert(ui.settings_row < SETTINGS_SELECTABLE_COUNT);
     }
 }
 
@@ -381,6 +395,36 @@ static void test_generator_resumes_after_dmm(void) {
     ui_switch_mode(UI_MODE_SCOPE);
     assert(!gen_running);
     assert_zero_output();
+}
+
+// A factory reset throws away the calibration as well as the preferences,
+// so it may only happen on a deliberate, confirmed press -- never on AUTO,
+// and never on the key repeat of the press that opened the confirmation.
+static void test_settings_factory_reset(void) {
+    unsigned resets_before = factory_resets;
+    unsigned reboots_before = reboots;
+
+    ui.overlay = UI_OVERLAY_SETTINGS;
+    ui.settings_row = SETTINGS_ROW_RESET;
+    ui.reset_confirm = 0;
+    ui.boot_export_state = BOOT_EXPORT_UI_NONE;
+
+    ui_handle_menu_keys(KEY_AUTO);
+    assert(!ui.reset_confirm && factory_resets == resets_before);
+
+    ui_handle_menu_keys(KEY_OK);
+    assert(ui.reset_confirm && factory_resets == resets_before);
+    ui_handle_menu_keys(KEY_OK | KEY_REPEAT);
+    assert(ui.reset_confirm && factory_resets == resets_before);
+    ui_handle_menu_keys(KEY_MENU);
+    assert(!ui.reset_confirm && factory_resets == resets_before);
+    assert(ui.overlay == UI_OVERLAY_SETTINGS);
+
+    ui_handle_menu_keys(KEY_OK);
+    ui_handle_menu_keys(KEY_OK);
+    assert(factory_resets == resets_before + 1u);
+    assert(reboots == reboots_before + 1u);
+    ui.reset_confirm = 0;
 }
 
 // Remote (USB) generator control must work from any screen, so that the
@@ -473,6 +517,7 @@ int main(void) {
     test_sweep_units();
     test_bode_units();
     test_settings_export();
+    test_settings_factory_reset();
     test_remote_generator_control();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;

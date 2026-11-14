@@ -265,6 +265,46 @@ static void test_screenshot(void) {
     assert(raw_screenshot_next_index(used) == 1);
 }
 
+// A capture that cannot be written used to come back as a bare failure, so
+// "the drive is full" -- the only one the user can act on -- looked exactly
+// like a write error. Each cause now has to name itself.
+static void test_screenshot_failure_reasons(void) {
+    raw_fat_volume_t fat = setup(512, FAT_TYPE_12, 1);
+    uint32_t free_kb = 0;
+    uint32_t total_kb = 0;
+    uint32_t cluster_kb;
+
+    assert(usb_msc_storage_free_kb(&free_kb, &total_kb));
+    cluster_kb = ((uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster) / 1024u;
+    assert(total_kb == raw_fat_cluster_count(&fat) * cluster_kb);
+    assert(free_kb == total_kb);   // nothing is allocated on a fresh volume
+
+    // One capture takes its clusters out of the free count, and no more.
+    assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_OK);
+    assert(usb_msc_storage_free_kb(&free_kb, 0));
+    assert(free_kb == total_kb - SCREENSHOT_CLUSTER_COUNT * cluster_kb);
+
+    // Every cluster taken: full, and nothing written.
+    fat = setup(512, FAT_TYPE_12, 1);
+    for (uint32_t cluster = 2; cluster <= raw_fat_cluster_count(&fat) + 1u; ++cluster) {
+        assert(raw_fat_write_entry_copy(&fat, 0, cluster, 0x0FFFu));
+    }
+    writes = 0;
+    assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_FULL);
+    assert(disk[fat.root_lba * fat.bytes_per_sector + 32] == 0);
+    assert(usb_msc_storage_free_kb(&free_kb, 0) && free_kb == 0);
+
+    // Every root slot taken, but space to spare: a different complaint.
+    fat = setup(512, FAT_TYPE_12, 1);
+    uint8_t *root = disk + fat.root_lba * fat.bytes_per_sector;
+    uint32_t root_slots = (fat.root_dir_sectors * fat.bytes_per_sector) / 32u;
+    for (uint32_t i = 0; i < root_slots; ++i) {
+        memcpy(root + 32u * i, "OTHER      ", 11);
+        root[32u * i + 11] = 0x20;
+    }
+    assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_NO_SLOT);
+}
+
 static void test_storage_busy(void) {
     raw_fat_volume_t fat = setup(512, FAT_TYPE_12, 1);
     usb_ready = 1;
@@ -273,7 +313,7 @@ static void test_storage_busy(void) {
     raw_write_lba = 7;
     raw_write_loaded = raw_write_dirty = 1;
     memset(raw_write_sector, 0x5A, sizeof(raw_write_sector));
-    assert(!usb_msc_store_screenshot() && !writes);
+    assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_BUSY && !writes);
     assert(raw_write_loaded && raw_write_dirty && raw_write_lba == 7);
     for (uint16_t i = 0; i < sizeof(raw_write_sector); ++i) assert(raw_write_sector[i] == 0x5A);
     assert(disk[fat.root_lba * fat.bytes_per_sector + 32] == 0);
@@ -346,6 +386,7 @@ int main(void) {
     test_export(512, FAT_TYPE_32, 1);
     test_failures();
     test_screenshot();
+    test_screenshot_failure_reasons();
     test_storage_busy();
     test_cdc_command_dispatch();
     puts("bootloader FAT export checks passed (" HW_TARGET_NAME ")");
