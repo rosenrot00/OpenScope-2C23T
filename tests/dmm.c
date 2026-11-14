@@ -11,6 +11,7 @@
 #undef volatile
 #undef __asm__
 #include "../src/ui.c"
+#include "../src/font.c"
 
 static void make_frame(const char digits[4], unsigned dots, uint8_t prefix,
                        uint8_t flags_b, uint8_t flags_c, uint8_t frame[9]) {
@@ -302,17 +303,91 @@ static void test_display_units_are_si(void) {
     // Unambiguous units pass through, and a null never crashes the display.
     assert(strcmp(dmm_unit_si_text("V"), "V") == 0);
     assert(strcmp(dmm_unit_si_text("A"), "A") == 0);
-    assert(strcmp(dmm_unit_si_text("DEG"), "DEG") == 0);
+    // Temperature is shown as a degree sign plus the scale; the font carries
+    // the degree sign on '~', which is why the unit is spelled that way.
+    // The chip sends "DEG" for both scales -- the flag is what tells them
+    // apart, so reading it wrong would label a Fahrenheit value as Celsius.
+    dmm_unit_fahrenheit = 0;
+    assert(strcmp(dmm_unit_si_text("DEG"), "~C") == 0);
+    dmm_unit_fahrenheit = 1;
+    assert(strcmp(dmm_unit_si_text("DEG"), "~F") == 0);
+    dmm_unit_fahrenheit = 0;
     assert(strcmp(dmm_unit_si_text(NULL), "") == 0);
 
-    // Note: every lower case letter used above must have a glyph in font.c.
-    // font5x7_get() falls back to a blank for unknown characters, so a missing
-    // glyph would silently erase the unit instead of failing loudly.
+    // Every character these units are made of must have a glyph of its own.
+    // font5x7_get() falls back to a blank for an unknown character, so a
+    // missing glyph would quietly erase part of the unit rather than fail
+    // loudly -- and that blank is exactly what the SI spelling buys back.
+    static const char *const kUnits[] = {
+        "MV", "MA", "UA", "NF", "UF", "MF", "OHM", "KOHM", "MOHM", "DEG",
+    };
+    const uint8_t *blank = font5x7_get(1);   // 1 has no glyph: the blank one
+    for (unsigned scale = 0; scale < 2u; ++scale) {
+        dmm_unit_fahrenheit = (uint8_t)scale;
+        for (unsigned u = 0; u < sizeof(kUnits) / sizeof(kUnits[0]); ++u) {
+            for (const char *p = dmm_unit_si_text(kUnits[u]); *p; ++p) {
+                assert(font5x7_get(*p) != blank);
+            }
+        }
+    }
+    dmm_unit_fahrenheit = 0;
+}
+
+// The scope ranges have the multimeter's problem and the same cure: one
+// spelling for the host, which has parsed "500M" since before any of this,
+// and one for the eye, which reads "500M" as five hundred megavolts.
+// What draw_scope_channel_range() ends up occupying: the whole label at
+// scale 2 when it fits, otherwise the number at scale 2 and the unit at
+// scale 1 beside it.
+static unsigned range_field_width(const char *value, const char *unit) {
+    unsigned number = (4u + (unsigned)strlen(value)) * 12u;
+    unsigned full = number + (unsigned)strlen(unit) * 12u;
+
+    return full <= SCOPE_RANGE_FIELD_W ? full : number + (unsigned)strlen(unit) * 6u;
+}
+
+static void test_scope_ranges_are_readable(void) {
+    const uint8_t *blank = font5x7_get(1);
+    unsigned count = sizeof(scope_vdivs_short) / sizeof(scope_vdivs_short[0]);
+
+    assert(count == SCOPE_VDIV_COUNT);
+    assert(sizeof(scope_vdiv_value) / sizeof(scope_vdiv_value[0]) == count);
+    assert(sizeof(scope_vdiv_unit) / sizeof(scope_vdiv_unit[0]) == count);
+    assert(sizeof(scope_vdiv_x10_value) / sizeof(scope_vdiv_x10_value[0]) == count);
+    assert(sizeof(scope_vdiv_x10_unit) / sizeof(scope_vdiv_x10_unit[0]) == count);
+
+    for (unsigned i = 0; i < count; ++i) {
+        const char *parts[] = {
+            scope_vdiv_value[i], scope_vdiv_unit[i],
+            scope_vdiv_x10_value[i], scope_vdiv_x10_unit[i],
+        };
+        for (unsigned p = 0; p < 4u; ++p) {
+            for (const char *c = parts[p]; *c; ++c) {
+                assert(font5x7_get(*c) != blank);
+            }
+        }
+        // The bottom bar gives each channel SCOPE_RANGE_FIELD_W pixels
+        // and the timebase starts immediately after, so a range that
+        // overflows does not wrap -- it writes over the field beside it.
+        // The bar draws the unit at full size when the pair fits and at
+        // half size otherwise, so the narrower of the two has to fit.
+        assert(range_field_width(scope_vdiv_value[i], scope_vdiv_unit[i]) <=
+               SCOPE_RANGE_FIELD_W);
+        assert(range_field_width(scope_vdiv_x10_value[i], scope_vdiv_x10_unit[i]) <=
+               SCOPE_RANGE_FIELD_W);
+    }
+
+    // The version string is shown as written, lower case v and all.
+    for (const char *c = FIRMWARE_VERSION_TEXT; *c; ++c) {
+        assert(font5x7_get(*c) != blank);
+    }
+    assert(font5x7_get('v') != font5x7_get('V'));
 }
 
 int main(void) {
     test_stock_decoding();
     test_display_units_are_si();
+    test_scope_ranges_are_readable();
     test_all_numeric_digits();
     test_status_and_rejected_frames();
     test_relative_precision();

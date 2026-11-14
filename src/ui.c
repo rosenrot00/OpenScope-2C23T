@@ -645,11 +645,27 @@ static const char *const scope_timebases_short[] = {
     "1M", "2M", "5M", "10M", "20M", "50M",
     "100M", "200M", "500M", "1S", "2S", "5S", "10S",
 };
+// Sent over USB, where the host has parsed this spelling since before we
+// touched it. The screen uses the tables below instead.
 static const char *const scope_vdivs_short[] = {
     "20M", "50M", "100M", "200M", "500M", "1V", "2V", "5V", "10V",
 };
 static const char *const scope_vdivs_x10_short[] = {
     "200M", "500M", "1V", "2V", "5V", "10V", "20V", "50V", "100V",
+};
+// Shown on screen, kept in two pieces so the bar can shrink the unit on
+// its own when the pair will not fit. See draw_scope_channel_range().
+static const char *const scope_vdiv_value[] = {
+    "20", "50", "100", "200", "500", "1", "2", "5", "10",
+};
+static const char *const scope_vdiv_unit[] = {
+    "mV", "mV", "mV", "mV", "mV", "V", "V", "V", "V",
+};
+static const char *const scope_vdiv_x10_value[] = {
+    "200", "500", "1", "2", "5", "10", "20", "50", "100",
+};
+static const char *const scope_vdiv_x10_unit[] = {
+    "mV", "mV", "V", "V", "V", "V", "V", "V", "V",
 };
 static const uint32_t scope_vdiv_base_mv[] = {20u, 50u, 100u, 200u, 500u, 1000u, 2000u, 5000u, 10000u};
 static const uint16_t scope_vdiv_range_code[] = {1000u, 400u, 200u, 100u, 40u, 20u, 10u, 4u, 2u};
@@ -989,14 +1005,15 @@ static void gen_freq_draw_unit(uint16_t x, uint16_t y, uint8_t unit, uint16_t fg
         unit = 0;
     }
     if (unit == 0u) {
-        lcd_text(x, (uint16_t)(y + 4u), "HZ", text, bg, 1);
+        lcd_text(x, (uint16_t)(y + 4u), "Hz", text, bg, 1);
         if (selected) {
             lcd_rect(x, (uint16_t)(y + 14u), 12, 2, C_TEXT);
         }
     } else {
-        char prefix[2] = {unit == 1u ? 'K' : 'M', 0};
+        // k for kilo, M for mega: the case is the unit.
+        char prefix[2] = {unit == 1u ? 'k' : 'M', 0};
         lcd_text((uint16_t)(x + 3u), y, prefix, text, bg, 1);
-        lcd_text(x, (uint16_t)(y + 10u), "HZ", text, bg, 1);
+        lcd_text(x, (uint16_t)(y + 10u), "Hz", text, bg, 1);
         if (selected) {
             lcd_rect(x, (uint16_t)(y + 20u), 12, 2, C_TEXT);
         }
@@ -1629,11 +1646,64 @@ static const char *scope_timebase_chip_label(void) {
     return scope_timebases_short[scope_safe_timebase()];
 }
 
-static const char *scope_vdiv_chip_label(void) {
-    uint8_t idx = ui.active_ch == 2u ? 1u : 0u;
-    uint8_t vdiv = scope_safe_vdiv();
+// The same range for the eye rather than for the host: "500mV", not the
+// "500M" that reads as five hundred megavolts.
+static void scope_vdiv_display(uint8_t idx, const char **value, const char **unit) {
+    uint8_t vdiv;
 
-    return scope_probe_x10[idx] ? scope_vdivs_x10_short[vdiv] : scope_vdivs_short[vdiv];
+    if (idx >= 2u) {
+        idx = 0;
+    }
+    vdiv = scope_vdiv_ch[idx] < SCOPE_VDIV_COUNT ? scope_vdiv_ch[idx] : 0u;
+    if (scope_probe_x10[idx]) {
+        *value = scope_vdiv_x10_value[vdiv];
+        *unit = scope_vdiv_x10_unit[vdiv];
+    } else {
+        *value = scope_vdiv_value[vdiv];
+        *unit = scope_vdiv_unit[vdiv];
+    }
+}
+
+enum {
+    // What the bottom bar has for one channel before the next field
+    // starts. Eight characters at scale 2, and no wrapping: a range that
+    // overflows writes over the timebase beside it.
+    SCOPE_RANGE_FIELD_W = 96,
+};
+
+// One channel's range in the bottom bar. "CH1 2V" fits at full size,
+// "CH1 500mV" does not, so the unit drops to half size -- but only when
+// it has to: a lone "V" at half size reads as a lower case v.
+static void draw_scope_channel_range(uint16_t x, uint16_t y, const char *name,
+                                     uint8_t idx, uint16_t color, uint16_t bg) {
+    char text[12];
+    const char *value;
+    const char *unit;
+
+    scope_vdiv_display(idx, &value, &unit);
+    scope_text_copy(text, name, sizeof(text));
+    ui_text_append(text, " ", sizeof(text));
+    ui_text_append(text, value, sizeof(text));
+    if (lcd_text_width(text, 2) + lcd_text_width(unit, 2) <= SCOPE_RANGE_FIELD_W) {
+        ui_text_append(text, unit, sizeof(text));
+        lcd_text(x, y, text, color, bg, 2);
+        return;
+    }
+    lcd_text(x, y, text, color, bg, 2);
+    // Sat on the digits' own baseline: they stop two rows short of the
+    // bottom of the cell, so a unit hung off the cell would sit low.
+    lcd_text((uint16_t)(x + lcd_text_width(text, 2)), (uint16_t)(y + 5u), unit, color, bg, 1);
+}
+
+static const char *scope_vdiv_menu_label(void) {
+    static char label[8];
+    const char *value;
+    const char *unit;
+
+    scope_vdiv_display(ui.active_ch == 2u ? 1u : 0u, &value, &unit);
+    scope_text_copy(label, value, sizeof(label));
+    ui_text_append(label, unit, sizeof(label));
+    return label;
 }
 
 static const char *scope_vdiv_chip_label_for_channel(uint8_t idx) {
@@ -1647,27 +1717,14 @@ static const char *scope_vdiv_chip_label_for_channel(uint8_t idx) {
 }
 
 static void draw_scope_scale_status(uint16_t y, uint16_t bg) {
-    char ch1[10];
-    char ch2[10];
-
     if (scope_ch_enabled[0]) {
-        ch1[0] = 'C';
-        ch1[1] = 'H';
-        ch1[2] = '1';
-        ch1[3] = ' ';
-        scope_text_copy(&ch1[4], scope_vdiv_chip_label_for_channel(0), 6);
-        lcd_text(0, y, ch1, C_CH1, bg, 2);
+        draw_scope_channel_range(0, y, "CH1", 0, C_CH1, bg);
     }
     lcd_text_center(96, y, 72, scope_timebase_label(), C_TEXT, bg, 2);
     lcd_text_center(168, y, 56, ui.running ? (scope_slow_roll_active() ? "ROLL" : "RUN") : "HOLD",
                     ui.running ? C_DMM : C_WARN, bg, 2);
     if (scope_ch_enabled[1]) {
-        ch2[0] = 'C';
-        ch2[1] = 'H';
-        ch2[2] = '2';
-        ch2[3] = ' ';
-        scope_text_copy(&ch2[4], scope_vdiv_chip_label_for_channel(1), 6);
-        lcd_text(224, y, ch2, C_CH2, bg, 2);
+        draw_scope_channel_range(224, y, "CH2", 1, C_CH2, bg);
     }
 }
 
@@ -2081,7 +2138,7 @@ static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t
     char freq_label[12];
 
     lcd_line(gx, y_axis_top, (uint16_t)(gx + gw), y_axis_top, axis_color);
-    lcd_text(gx, (uint16_t)(y_axis_top + 4u), "0.0HZ", RGB565(180, 180, 180), text_bg, 1);
+    lcd_text(gx, (uint16_t)(y_axis_top + 4u), "0.0Hz", RGB565(180, 180, 180), text_bg, 1);
 
     scope_format_frequency_reading(freq_label, (uint32_t)(f_max_hz + 0.5f));
     uint16_t fw = lcd_text_width(freq_label, 1);
@@ -2700,7 +2757,7 @@ static const char *scope_param_value(uint8_t param) {
         return scope_probe_label();
     }
     if (param == SCOPE_PARAM_GAIN) {
-        return scope_vdiv_chip_label();
+        return scope_vdiv_menu_label();
     }
     if (param == SCOPE_PARAM_COUPLING) {
         return scope_coupling_label();
@@ -2963,7 +3020,7 @@ static const char *scope_h_pos_label(void) {
         if (ns < 1000u) {
             scope_format_u32(number, ns);
             out = scope_append_text(label, out, sizeof(label), number);
-            out = scope_append_text(label, out, sizeof(label), "NS");
+            out = scope_append_text(label, out, sizeof(label), "ns");
         } else {
             uint32_t us_x10 = (ns + 50u) / 100u;
             scope_format_u32(number, us_x10 / 10u);
@@ -2973,7 +3030,7 @@ static const char *scope_h_pos_label(void) {
                 label[out++] = (char)('0' + us_x10 % 10u);
                 label[out] = 0;
             }
-            out = scope_append_text(label, out, sizeof(label), "US");
+            out = scope_append_text(label, out, sizeof(label), "us");
         }
     } else if (unit_ns < 100000u) {
         uint32_t us_x10 = (mag * 6u * unit_ns + SCOPE_H_POS_LIMIT * 5u) /
@@ -2985,7 +3042,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + us_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "US");
+        out = scope_append_text(label, out, sizeof(label), "us");
     } else if (unit_ns < 100000000u) {
         uint32_t ms_x10 = (mag * 6u * (unit_ns / 1000u) + SCOPE_H_POS_LIMIT * 5u) /
             (SCOPE_H_POS_LIMIT * 10u);
@@ -2996,7 +3053,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + ms_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "MS");
+        out = scope_append_text(label, out, sizeof(label), "ms");
     } else {
         uint32_t s_x10 = (mag * 6u * (unit_ns / 1000000u) + SCOPE_H_POS_LIMIT * 5u) /
             (SCOPE_H_POS_LIMIT * 10u);
@@ -3007,7 +3064,7 @@ static const char *scope_h_pos_label(void) {
             label[out++] = (char)('0' + s_x10 % 10u);
             label[out] = 0;
         }
-        out = scope_append_text(label, out, sizeof(label), "S");
+        out = scope_append_text(label, out, sizeof(label), "s");
     }
     (void)out;
     return label;
@@ -3366,7 +3423,7 @@ static const char *scope_cursor_pos_label(uint8_t idx) {
                 scope_format_signed_float(label[idx], val, "DB");
             } else {
                 val = 180.0f - (float)scope_cursor_y[idx] * 360.0f / 255.0f;
-                scope_format_signed_float(label[idx], val, "DEG");
+                scope_format_signed_float(label[idx], val, "~");
             }
         }
     } else if ((scope_fft_src == 1u || scope_fft_src == 2u) && ui.scope_cursor_mode == SCOPE_CURSOR_TIME) {
@@ -3429,7 +3486,7 @@ static const char *scope_cursor_delta_chip_label(void) {
             float p1 = 180.0f - (float)scope_cursor_y[1] * 360.0f / 255.0f;
             float ddeg = p0 > p1 ? p0 - p1 : p1 - p0;
             label[0] = 'D'; label[1] = 'P'; label[2] = ' ';
-            scope_format_signed_float(&label[3], ddeg, "DEG");
+            scope_format_signed_float(&label[3], ddeg, "~");
         }
     } else if ((scope_fft_src == 1u || scope_fft_src == 2u) && ui.scope_cursor_mode == SCOPE_CURSOR_TIME) {
         float eff_ns = (float)scope_sample_period_ns();
@@ -3916,7 +3973,11 @@ static const char *dmm_unit_si_text(const char *raw) {
     if (ui_text_equal(raw, "NF")) return "nF";
     if (ui_text_equal(raw, "UF")) return "uF";
     if (ui_text_equal(raw, "MF")) return "mF";
-    return raw;   // V, A, F and DEG are unambiguous as they stand
+    // Temperature. The font carries the degree sign on '~' (see font.c), so
+    // the screen can show 23.8 degC instead of the bare word DEG -- and which
+    // of the two scales it is, which "DEG" on its own cannot say.
+    if (ui_text_equal(raw, "DEG")) return dmm_unit_is_fahrenheit() ? "~F" : "~C";
+    return raw;   // V, A and F are unambiguous as they stand
 }
 
 static const char *dmm_live_display_unit(void) {
@@ -5492,15 +5553,16 @@ static void scope_format_frequency_reading(char out[12], uint32_t hz) {
     const char *unit;
     uint8_t n;
 
+    // Lower case k, and Hz with only the H capital: the case is the unit.
     if (hz < 1000u) {
         value_x10 = hz * 10u;
-        unit = "HZ";
+        unit = "Hz";
     } else if (hz < 1000000u) {
         value_x10 = (hz + 50u) / 100u;
-        unit = "KHZ";
+        unit = "kHz";
     } else {
         value_x10 = (hz + 50000u) / 100000u;
-        unit = "MHZ";
+        unit = "MHz";
     }
     scope_format_u32(number, value_x10 / 10u);
     scope_text_copy(out, number, 8);
@@ -7244,7 +7306,10 @@ static const char *settings_value_text(uint8_t row, char out[12]) {
         return "EXPORT";
     }
     if (row == SETTINGS_ROW_RESET) {
-        return "DEFAULTS";
+        // Seven characters, so it is drawn at the same size as the values
+        // on the tiles beside it; "DEFAULTS" was one too many and dropped
+        // to half size, which made the tile look disabled.
+        return "FACTORY";
     }
     return FIRMWARE_VERSION_TEXT;
 }

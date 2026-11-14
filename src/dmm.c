@@ -75,6 +75,10 @@ static uint16_t dmm_detected_brr;
 static int32_t dmm_value_fixed;
 static char dmm_value[10] = "----";
 static char dmm_unit[6] = "V";
+// The chip reports Celsius and Fahrenheit through two different flags but
+// the unit it spells for both is "DEG" (see format_unit), so the scale would
+// be lost the moment the unit string is all the screen has to go on.
+static uint8_t dmm_unit_fahrenheit;
 static char dmm_status[9] = "B0 RX00";
 
 static void text_copy(char *dst, const char *src, uint8_t max_len);
@@ -360,6 +364,7 @@ static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char 
     } else if (flags_c & 0x10u) {
         kind = 'D';
     }
+    dmm_unit_fahrenheit = (uint8_t)(kind == 'D');
 
     if (flags_a & 0x40u) {
         prefix = 'K';
@@ -959,6 +964,12 @@ const char *dmm_value_text(void) {
 
 const char *dmm_unit_text(void) {
     return dmm_unit;
+}
+
+// "DEG" covers both scales over USB, for the sake of hosts that have parsed
+// it that way all along. The screen has room to say which one it is.
+uint8_t dmm_unit_is_fahrenheit(void) {
+    return dmm_unit_fahrenheit;
 }
 
 
