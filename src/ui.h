@@ -19,6 +19,8 @@ void ui_scope_set_running(uint8_t run);
 void ui_scope_trigger_auto(void);
 void ui_scope_step_timebase(int8_t dir);
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir);
+void ui_request_screenshot(void);
+void ui_inject_keys(uint32_t events);
 void ui_gen_set_output(uint8_t run);
 void ui_gen_set_frequency(uint32_t hz);
 void ui_gen_set_wave(uint8_t wave);
