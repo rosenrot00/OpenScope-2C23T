@@ -31,9 +31,9 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Runtime USB mass storage** while the device is running.
 - **USB serial telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
 - **In-app firmware update** by copying a matching `F2C23T*.bin` file to the exposed USB storage.
-- **Screenshot capture** to the device storage.
+- **Screenshot capture** to the device storage, with the USB `SHOT` command and remote button presses via `KEY:<NAME>`.
 - **Read-only bootloader export** from Settings, with hardware-specific backups and CRC32 metadata.
-- **Configurable settings** for brightness, beep volume, sleep behavior, and startup screen.
+- **Configurable settings** for brightness, beep volume, sleep behavior, and startup screen, plus hardware target, free storage, and a confirmed factory reset.
 - **Separate release binaries** for old and newer hardware revisions.
 
 ## FFT Spectrum
@@ -89,8 +89,8 @@ make release
 
 Output files:
 
-- `dist/F2C23T-v2026.11.4-08008000.bin`
-- `dist/F2C23T-v2026.11.4-HW4.0-08007000.bin`
+- `dist/F2C23T-v2026.11.5-08008000.bin`
+- `dist/F2C23T-v2026.11.5-HW4.0-08007000.bin`
 
 Run the host regression tests with Clang:
 
@@ -117,8 +117,8 @@ This function never erases or programs the MCU's internal flash and never change
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.11.4-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.11.4-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.11.5-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.11.5-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 When upgrading to v2026.11.4, saved settings and user calibration from older OpenScope builds are not carried over. The new settings signature prevents data from another firmware from being interpreted as OpenScope settings.
 
