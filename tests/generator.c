@@ -489,6 +489,7 @@ static void test_editor_leading_zeros(void) {
 // so it may only happen on a deliberate, confirmed press -- never on AUTO,
 // and never on the key repeat of the press that opened the confirmation.
 static void test_settings_factory_reset(void) {
+    setup();
     unsigned resets_before = factory_resets;
     unsigned reboots_before = reboots;
 
@@ -512,6 +513,8 @@ static void test_settings_factory_reset(void) {
     ui_handle_menu_keys(KEY_OK);
     assert(factory_resets == resets_before + 1u);
     assert(reboots == reboots_before + 1u);
+    assert(!gen_running && !tuning_word);
+    assert_zero_output();
     ui.reset_confirm = 0;
 }
 

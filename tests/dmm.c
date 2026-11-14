@@ -333,6 +333,21 @@ static void test_display_units_are_si(void) {
     dmm_unit_fahrenheit = 0;
 }
 
+static void test_temperature_scale_changes_only_with_accepted_reading(void) {
+    uint8_t frame[9];
+    reading(8, "0042", 0, 0, 0, 0x10, "42", "DEG");
+    assert(dmm_unit_is_fahrenheit());
+
+    make_frame("0042", 0, 0, 0, 0x02, frame);
+    assert(!parse_frame(frame));
+    assert(dmm_unit_is_fahrenheit());
+
+    make_frame("0042", 0, 0, 0, 0x20, frame);
+    assert(parse_frame(frame));
+    assert(!dmm_unit_is_fahrenheit());
+    assert(strcmp(dmm_unit_text(), "DEG") == 0);
+}
+
 // The scope ranges have the multimeter's problem and the same cure: one
 // spelling for the host, which has parsed "500M" since before any of this,
 // and one for the eye, which reads "500M" as five hundred megavolts.
@@ -387,6 +402,7 @@ static void test_scope_ranges_are_readable(void) {
 int main(void) {
     test_stock_decoding();
     test_display_units_are_si();
+    test_temperature_scale_changes_only_with_accepted_reading();
     test_scope_ranges_are_readable();
     test_all_numeric_digits();
     test_status_and_rejected_frames();

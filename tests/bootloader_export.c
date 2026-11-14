@@ -23,6 +23,7 @@ static uint8_t readable;
 static uint8_t valid_vectors;
 static uint8_t update_busy;
 static unsigned writes;
+static unsigned reads;
 static unsigned fail_write;
 static uint32_t corrupt_addr;
 static uint8_t corrupt_pending;
@@ -45,6 +46,7 @@ uint16_t bootloader_describe(char *out, uint16_t capacity, uint32_t crc, const c
 void w25q_init(void) {}
 uint32_t w25q_capacity_bytes(void) { return sizeof(disk); }
 uint8_t w25q_read(uint32_t addr, uint8_t *dst, uint16_t len) {
+    ++reads;
     assert(addr <= sizeof(disk) && len <= sizeof(disk) - addr);
     memcpy(dst, disk + addr, len);
     if (corrupt_pending && addr == corrupt_addr) { dst[0] ^= 1u; corrupt_pending = 0; }
@@ -272,17 +274,20 @@ static void test_screenshot_failure_reasons(void) {
     raw_fat_volume_t fat = setup(512, FAT_TYPE_12, 1);
     uint32_t free_kb = 0;
     uint32_t total_kb = 0;
-    uint32_t cluster_kb;
+    uint32_t cluster_bytes;
 
+    reads = 0;
     assert(usb_msc_storage_free_kb(&free_kb, &total_kb));
-    cluster_kb = ((uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster) / 1024u;
-    assert(total_kb == raw_fat_cluster_count(&fat) * cluster_kb);
+    assert(reads < 8u);
+    cluster_bytes = (uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster;
+    assert(total_kb == raw_fat_cluster_count(&fat) * cluster_bytes / 1024u);
+    assert(total_kb > 0u);
     assert(free_kb == total_kb);   // nothing is allocated on a fresh volume
 
     // One capture takes its clusters out of the free count, and no more.
     assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_OK);
     assert(usb_msc_storage_free_kb(&free_kb, 0));
-    assert(free_kb == total_kb - SCREENSHOT_CLUSTER_COUNT * cluster_kb);
+    assert(free_kb == (raw_fat_cluster_count(&fat) - SCREENSHOT_CLUSTER_COUNT) * cluster_bytes / 1024u);
 
     // Every cluster taken: full, and nothing written.
     fat = setup(512, FAT_TYPE_12, 1);
@@ -303,6 +308,10 @@ static void test_screenshot_failure_reasons(void) {
         root[32u * i + 11] = 0x20;
     }
     assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_NO_SLOT);
+
+    (void)setup(512, FAT_TYPE_12, 1);
+    put_le32(disk + 32, (uint32_t)(sizeof(disk) / 512u) + 1u);
+    assert(!usb_msc_storage_free_kb(&free_kb, &total_kb));
 }
 
 static void test_storage_busy(void) {
@@ -368,12 +377,15 @@ static void test_cdc_command_dispatch(void) {
     injected_keys = 0;
     handle_cdc_rx_command("SHOT");
     assert(screenshot_requests == 1u);
+    handle_cdc_rx_command("SHOTGUN");
+    assert(screenshot_requests == 1u);
     handle_cdc_rx_command("KEY:MENU");
     handle_cdc_rx_command("KEY:AUTO_LONG");
     assert(injected_keys != 0u);
     // An unknown key name must do nothing at all rather than guess.
     uint32_t before = injected_keys;
     handle_cdc_rx_command("KEY:NOSUCHKEY");
+    handle_cdc_rx_command("KEY:OK\runexpected");
     assert(injected_keys == before);
 
     puts("USB CDC deferred dispatch, numeric bounds and whole-line overflow checks passed");

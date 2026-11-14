@@ -82,7 +82,7 @@ static uint8_t dmm_unit_fahrenheit;
 static char dmm_status[9] = "B0 RX00";
 
 static void text_copy(char *dst, const char *src, uint8_t max_len);
-static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char out[6]);
+static uint8_t format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char out[6]);
 static void dmm_send_mode_command(uint8_t mode_index);
 
 void dmm_hw4_set_mode_gate(uint8_t active) {
@@ -347,7 +347,7 @@ static uint8_t mode_is_low_current(void) {
     return dmm_current_mode == 11u || dmm_current_mode == 12u;
 }
 
-static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char out[6]) {
+static uint8_t format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char out[6]) {
     char kind = 0;
     char prefix = 0;
 
@@ -364,7 +364,6 @@ static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char 
     } else if (flags_c & 0x10u) {
         kind = 'D';
     }
-    dmm_unit_fahrenheit = (uint8_t)(kind == 'D');
 
     if (flags_a & 0x40u) {
         prefix = 'K';
@@ -419,6 +418,7 @@ static void format_unit(uint8_t flags_a, uint8_t flags_b, uint8_t flags_c, char 
             text_copy(out, "", 6);
         }
     }
+    return (uint8_t)(kind == 'D');
 }
 
 static uint8_t text_has_char(const char *text, char needle) {
@@ -486,6 +486,7 @@ static void dmm_apply_missing_uart_fallback(void) {
     dmm_value_fixed = new_fixed;
     dmm_valid = 1;
     dmm_synthetic_valid = 1;
+    dmm_unit_fahrenheit = 0;
 }
 
 static uint8_t unit_is_voltage(const char *unit) {
@@ -660,7 +661,7 @@ static uint8_t parse_frame(const uint8_t frame[DMM_FRAME_LEN]) {
     if (frame[0] != 0x5Au || frame[1] != 0xA5u) {
         return 0;
     }
-    format_unit(frame[6], frame[7], frame[8], new_unit);
+    uint8_t new_fahrenheit = format_unit(frame[6], frame[7], frame[8], new_unit);
     if (!format_value(frame, new_unit, new_value)) {
         return 0;
     }
@@ -679,13 +680,15 @@ static uint8_t parse_frame(const uint8_t frame[DMM_FRAME_LEN]) {
         return 0;
     }
 
-    changed = (uint8_t)(!dmm_valid || !text_equal(new_value, dmm_value) || !text_equal(new_unit, dmm_unit));
+    changed = (uint8_t)(!dmm_valid || !text_equal(new_value, dmm_value) ||
+                        !text_equal(new_unit, dmm_unit) || new_fahrenheit != dmm_unit_fahrenheit);
     text_copy(dmm_value, new_value, sizeof(dmm_value));
     text_copy(dmm_unit, new_unit, sizeof(dmm_unit));
     dmm_numeric_valid = new_numeric;
     dmm_value_fixed = new_fixed;
     dmm_valid = 1;
     dmm_synthetic_valid = 0;
+    dmm_unit_fahrenheit = new_fahrenheit;
     return changed;
 }
 

@@ -9963,6 +9963,7 @@ static void ui_handle_menu_keys(uint32_t events) {
             ui.reset_confirm = 0;
             ui_render();
         } else if (events & KEY_OK) {
+            gen_stop();
             settings_factory_reset();
             // Reboot rather than try to unwind the live state by hand:
             // ui_init() reads the settings once into static variables that

@@ -594,6 +594,17 @@ static uint32_t raw_fat_cluster_lba(const raw_fat_volume_t *fat, uint32_t cluste
     return fat->data_lba + (cluster - 2u) * fat->sectors_per_cluster;
 }
 
+static uint32_t raw_fat_decode_entry(uint8_t type, uint32_t cluster, const uint8_t *entry) {
+    if (type == FAT_TYPE_32) {
+        return le32_at(entry) & 0x0FFFFFFFu;
+    }
+    uint16_t pair = (uint16_t)entry[0] | ((uint16_t)entry[1] << 8);
+    if (type == FAT_TYPE_16) {
+        return pair;
+    }
+    return (cluster & 1u) ? (uint32_t)(pair >> 4) : (uint32_t)(pair & 0x0FFFu);
+}
+
 static uint8_t raw_fat_next_cluster(const raw_fat_volume_t *fat, uint32_t cluster, uint32_t *next) {
     uint32_t fat_offset;
     uint32_t byte_addr;
@@ -611,14 +622,7 @@ static uint8_t raw_fat_next_cluster(const raw_fat_volume_t *fat, uint32_t cluste
     if (!raw_fat_read_bytes(fat, byte_addr, entry, fat->type == FAT_TYPE_32 ? 4u : 2u)) {
         return 0;
     }
-    if (fat->type == FAT_TYPE_32) {
-        *next = le32_at(entry) & 0x0FFFFFFFu;
-    } else if (fat->type == FAT_TYPE_16) {
-        *next = (uint32_t)entry[0] | ((uint32_t)entry[1] << 8);
-    } else {
-        uint16_t pair = (uint16_t)entry[0] | ((uint16_t)entry[1] << 8);
-        *next = (cluster & 1u) ? (uint32_t)(pair >> 4) : (uint32_t)(pair & 0x0FFFu);
-    }
+    *next = raw_fat_decode_entry(fat->type, cluster, entry);
     return 1;
 }
 
@@ -1231,16 +1235,14 @@ uint8_t usb_msc_store_screenshot(void) {
     return usb_msc_save_screenshot() == SCREENSHOT_SAVE_OK ? 1u : 0u;
 }
 
-// Free space on the capture drive, in whole kilobytes. The FAT is walked
-// entry by entry because nothing on this volume keeps a free count: the
-// FAT12 table here is 3 KiB, so the scan is a single flash read, and it is
-// only ever asked for when the settings page opens.
+// Read each FAT sector once instead of issuing an SPI read per cluster.
 uint8_t usb_msc_storage_free_kb(uint32_t *free_kb, uint32_t *total_kb) {
     raw_fat_volume_t fat;
     uint32_t last_cluster;
     uint32_t cluster_bytes;
     uint32_t free_clusters = 0;
     uint32_t total_clusters;
+    uint32_t loaded_sector = UINT32_MAX;
 
     if (!usb_msc_storage_begin()) {
         return 0;
@@ -1249,31 +1251,53 @@ uint8_t usb_msc_storage_free_kb(uint32_t *free_kb, uint32_t *total_kb) {
         usb_msc_storage_end();
         return 0;
     }
+    uint32_t sectors = w25q_capacity_bytes() / fat.bytes_per_sector;
+    if (fat.part_lba >= sectors || fat.total_sectors > sectors - fat.part_lba ||
+        fat.fat_lba < fat.part_lba || fat.fat_lba >= fat.data_lba ||
+        fat.sectors_per_fat > fat.data_lba - fat.fat_lba) {
+        usb_msc_storage_end();
+        return 0;
+    }
     total_clusters = raw_fat_cluster_count(&fat);
     cluster_bytes = (uint32_t)fat.bytes_per_sector * fat.sectors_per_cluster;
     last_cluster = total_clusters + 1u;
+    uint16_t entry_width = fat.type == FAT_TYPE_32 ? 4u : 2u;
+    if (!total_clusters ||
+        raw_fat_entry_offset(&fat, last_cluster) + entry_width >
+            fat.sectors_per_fat * fat.bytes_per_sector) {
+        usb_msc_storage_end();
+        return 0;
+    }
     for (uint32_t cluster = 2; cluster <= last_cluster; ++cluster) {
+        uint32_t offset = raw_fat_entry_offset(&fat, cluster);
+        uint32_t sector = fat.fat_lba + offset / fat.bytes_per_sector;
+        uint16_t off = (uint16_t)(offset % fat.bytes_per_sector);
         uint32_t value;
-        if (!raw_fat_next_cluster(&fat, cluster, &value)) {
-            usb_msc_storage_end();
-            return 0;
+        if (off + entry_width > fat.bytes_per_sector) {
+            if (!raw_fat_next_cluster(&fat, cluster, &value)) {
+                usb_msc_storage_end();
+                return 0;
+            }
+        } else {
+            if (sector != loaded_sector) {
+                if (!raw_fat_read_sector(&fat, sector, msc_root_shadow)) {
+                    usb_msc_storage_end();
+                    return 0;
+                }
+                loaded_sector = sector;
+            }
+            value = raw_fat_decode_entry(fat.type, cluster, msc_root_shadow + off);
         }
         if (!value) {
             ++free_clusters;
         }
     }
     usb_msc_storage_end();
-    if (!cluster_bytes) {
-        return 0;
-    }
-    // Clusters first, bytes second: 2048 clusters of 4 KiB overflow nothing
-    // this way, and the division is exact because the cluster size is a
-    // power of two at least as large as a kilobyte.
     if (free_kb) {
-        *free_kb = free_clusters * (cluster_bytes / 1024u);
+        *free_kb = (free_clusters * cluster_bytes) / 1024u;
     }
     if (total_kb) {
-        *total_kb = total_clusters * (cluster_bytes / 1024u);
+        *total_kb = (total_clusters * cluster_bytes) / 1024u;
     }
     return 1;
 }
@@ -2054,12 +2078,12 @@ static void handle_cdc_rx_command(const char *cmd) {
             const char *rest = cdc_match_prefix(arg, keys[i].name);
             // The receive buffer still holds the line ending, and a short
             // name must not match a longer one: "MOVE" is not "MOVE_LONG".
-            if (rest && (*rest == 0 || *rest == 13 || *rest == 10)) {
+            if (rest && cdc_command_end(rest)) {
                 ui_inject_keys(keys[i].mask);
                 break;
             }
         }
-    } else if (cmd[0] == 'S' && cmd[1] == 'H' && cmd[2] == 'O' && cmd[3] == 'T') {
+    } else if ((arg = cdc_match_prefix(cmd, "SHOT")) != 0 && cdc_command_end(arg)) {
         // Saves the current screen as IMG_NN.BMP on the USB drive. The reply
         // ($SHOT,OK or $SHOT,ERR) is sent once the file has been written.
         ui_request_screenshot();
