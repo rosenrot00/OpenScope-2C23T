@@ -398,6 +398,93 @@ static void test_generator_resumes_after_dmm(void) {
     assert_zero_output();
 }
 
+// Only the rectangles something drew into reach the glass, so a screen
+// that draws less than the one before it used to leave the difference
+// behind -- three modes at once in a capture taken mid-switch. A full
+// render of a different screen has to start from a clean background; one
+// of the same screen must not, or every frame would flicker.
+static void test_full_render_clears_on_scene_change(void) {
+    ui.overlay = UI_OVERLAY_NONE;
+    ui.chrome_visible = 1;
+    ui.mode = UI_MODE_DMM;
+    last_full_scene_key = 0xFF;
+
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);            // first render of this screen
+    ui_render_job(UI_RENDER_FULL);
+    assert(!full_scene_clear);           // same screen again: no clear
+
+    ui.mode = UI_MODE_SCOPE;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+    ui_render_job(UI_RENDER_FULL);
+    assert(!full_scene_clear);
+
+    // The immersive layout covers different ground from the framed one.
+    ui.chrome_visible = 0;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+    ui.chrome_visible = 1;
+
+    // An overlay paints its own background, and leaves the mode screen
+    // underneath it owing a clear when it comes back.
+    ui_render_job(UI_RENDER_FULL);
+    ui.overlay = UI_OVERLAY_SETTINGS;
+    ui_render_job(UI_RENDER_FULL);
+    ui.overlay = UI_OVERLAY_NONE;
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+
+    // A partial render cannot repay the debt: it does not repaint enough.
+    ui.mode = UI_MODE_GEN;
+    ui_render_job(UI_RENDER_MODE_CONTENT);
+    assert(!full_scene_clear);
+    ui_render_job(UI_RENDER_FULL);
+    assert(full_scene_clear);
+}
+
+// A mode change asked for over USB has to repaint like the key-driven
+// shortcuts do. It did not, and the previous screen's title stayed on the
+// glass -- seen on the device as MULTIMETER content under an OSCILLOSCOPE
+// title, two seconds after the switch.
+static void test_remote_mode_change_repaints(void) {
+    setup();
+    ui_switch_mode(UI_MODE_SCOPE);
+    ui_render_job(UI_RENDER_FULL);
+
+    full_scene_clear = 0;
+    ui_set_main_mode(0);                 // DMM
+    assert(ui.mode == UI_MODE_DMM);
+    assert(full_scene_clear);            // the repaint happened, and cleared
+
+    // Asking again for the mode already shown must not repaint at all.
+    full_scene_clear = 0;
+    ui_set_main_mode(0);
+    assert(!full_scene_clear);
+}
+
+// Leading zeros are placeholders: the editors keep them in place so the
+// digit under edit never moves, but they must not read as loudly as the
+// digits that carry the value. The last place is never a placeholder.
+static void test_editor_leading_zeros(void) {
+    assert(editor_dim_digits("0001", 4) == 3);
+    assert(editor_dim_digits("4999", 4) == 0);
+    assert(editor_dim_digits("0500", 4) == 1);
+    assert(editor_dim_digits("0000", 4) == 3);   // one solid 0 is left
+    assert(editor_dim_digits("0", 1) == 0);
+    assert(editor_dim_digits(0, 4) == 0);
+
+    // The faded colour has to sit between the text and its background,
+    // channel by channel, or it would stand out rather than recede.
+    uint16_t fg = RGB565(255, 255, 255);
+    uint16_t bg = RGB565(30, 30, 45);
+    uint16_t dim = color_mix(fg, bg);
+    assert((dim >> 11) < (fg >> 11) && (dim >> 11) > (bg >> 11));
+    assert(((dim >> 5) & 0x3Fu) < ((fg >> 5) & 0x3Fu));
+    assert(((dim >> 5) & 0x3Fu) > ((bg >> 5) & 0x3Fu));
+    assert(color_mix(fg, fg) == fg);
+}
+
 // A factory reset throws away the calibration as well as the preferences,
 // so it may only happen on a deliberate, confirmed press -- never on AUTO,
 // and never on the key repeat of the press that opened the confirmation.
@@ -519,6 +606,9 @@ int main(void) {
     test_bode_units();
     test_settings_export();
     test_settings_factory_reset();
+    test_editor_leading_zeros();
+    test_full_render_clears_on_scene_change();
+    test_remote_mode_change_repaints();
     test_remote_generator_control();
     printf("generator: mode transitions, CSV failures, deferred uploads, Bode ownership, waveforms and remote control passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
