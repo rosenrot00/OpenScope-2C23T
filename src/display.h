@@ -20,3 +20,9 @@ void lcd_text_transparent(uint16_t x, uint16_t y, const char *text, uint16_t fg,
 void lcd_text_center(uint16_t x, uint16_t y, uint16_t w, const char *text, uint16_t fg, uint16_t bg, uint8_t scale);
 uint16_t lcd_text_width(const char *text, uint8_t scale);
 const uint16_t *lcd_framebuffer(void);
+
+// Low-level hooks for gfx.c: during the collect pass a primitive only marks
+// its bounding box dirty; during the render pass it writes pixels.
+uint8_t lcd_collecting(void);
+void lcd_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+void lcd_pixel(int16_t x, int16_t y, uint16_t color);

@@ -589,3 +589,24 @@ const uint16_t *lcd_framebuffer(void) {
     return 0;
 #endif
 }
+
+uint8_t lcd_collecting(void) {
+    return lcd_pass == LCD_PASS_COLLECT;
+}
+
+void lcd_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (lcd_pass == LCD_PASS_COLLECT) {
+        dirty_mark(x, y, w, h);
+    }
+}
+
+void lcd_pixel(int16_t x, int16_t y, uint16_t color) {
+    if (lcd_pass == LCD_PASS_COLLECT) {
+        return;
+    }
+    if (lcd_pass == LCD_PASS_RENDER) {
+        lcd_plot_band(x, y, color);
+        return;
+    }
+    lcd_plot_direct(x, y, color);
+}

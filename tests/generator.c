@@ -123,6 +123,9 @@ void lcd_text_center(uint16_t x, uint16_t y, uint16_t w, const char *str, uint16
     (void)x; (void)y; (void)w; (void)str; (void)fg; (void)bg; (void)scale;
 }
 uint16_t lcd_text_width(const char *text, uint8_t scale) { return (uint16_t)(strlen(text) * 6u * scale); }
+uint8_t lcd_collecting(void) { return 0; }
+void lcd_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h) { (void)x; (void)y; (void)w; (void)h; }
+void lcd_pixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
 uint32_t load_counter_read(void) { return 0; }
 uint32_t load_counter_elapsed(uint32_t start, uint32_t end) { return end - start; }
 void battery_update(void) {}
@@ -334,6 +337,22 @@ static void test_bode_units(void) {
     siggen_shutdown();
 }
 
+static void test_mode_menu_keys(void) {
+    // The menu is two rows of two cards: up/down swap rows, left/right walk.
+    ui.overlay = UI_OVERLAY_MODE_MENU;
+    ui.menu_index = 0;
+    ui_handle_menu_keys(KEY_DOWN);
+    assert(ui.menu_index == 2);
+    ui_handle_menu_keys(KEY_DOWN);
+    assert(ui.menu_index == 0);
+    ui.menu_index = 3;
+    ui_handle_menu_keys(KEY_UP);
+    assert(ui.menu_index == 1);
+    ui_handle_menu_keys(KEY_RIGHT);
+    assert(ui.menu_index == 2);
+    ui.overlay = UI_OVERLAY_NONE;
+}
+
 static void test_settings_export(void) {
     ui.overlay = UI_OVERLAY_SETTINGS;
     ui.settings_row = SETTINGS_BOOT_EXPORT_ROW;
@@ -343,8 +362,10 @@ static void test_settings_export(void) {
     // SETTINGS_SELECTABLE_COUNT, and it has to be the last row drawn.
     assert(SETTINGS_SELECTABLE_COUNT == SETTINGS_ROW_INFO);
     assert(SETTINGS_ROW_COUNT == SETTINGS_ROW_INFO + 1u);
-    assert(!strcmp(settings_row_labels[SETTINGS_ROW_INFO], "INFO"));
-    assert(!strcmp(settings_row_labels[SETTINGS_ROW_RESET], "RESET"));
+    // One tile label and icon per selectable row; INFO draws its own card.
+    assert(sizeof(settings_tile_labels) / sizeof(settings_tile_labels[0]) == SETTINGS_ROW_INFO);
+    assert(sizeof(settings_tile_icons) / sizeof(settings_tile_icons[0]) == SETTINGS_ROW_INFO);
+    assert(!strcmp(settings_tile_labels[SETTINGS_ROW_RESET], "Reset"));
     ui_handle_menu_keys(KEY_AUTO);
     assert(ui.boot_export_state == BOOT_EXPORT_UI_NONE && !boot_exports);
     ui_handle_menu_keys(KEY_OK);
@@ -474,15 +495,17 @@ static void test_editor_leading_zeros(void) {
     assert(editor_dim_digits("0", 1) == 0);
     assert(editor_dim_digits(0, 4) == 0);
 
-    // The faded colour has to sit between the text and its background,
-    // channel by channel, or it would stand out rather than recede.
+    // Blended colours (anti-aliasing, tints) have to sit between the two
+    // inputs, channel by channel, and blending a colour with itself or at
+    // full strength must give it back unchanged.
     uint16_t fg = RGB565(255, 255, 255);
     uint16_t bg = RGB565(30, 30, 45);
-    uint16_t dim = color_mix(fg, bg);
+    uint16_t dim = gfx_blend(fg, bg, 8);
     assert((dim >> 11) < (fg >> 11) && (dim >> 11) > (bg >> 11));
     assert(((dim >> 5) & 0x3Fu) < ((fg >> 5) & 0x3Fu));
     assert(((dim >> 5) & 0x3Fu) > ((bg >> 5) & 0x3Fu));
-    assert(color_mix(fg, fg) == fg);
+    assert(gfx_blend(fg, fg, 8) == fg);
+    assert(gfx_blend(fg, bg, 16) == fg && gfx_blend(fg, bg, 0) == bg);
 }
 
 // A factory reset throws away the calibration as well as the preferences,
@@ -607,6 +630,7 @@ int main(void) {
     test_waveform_bounds();
     test_sweep_units();
     test_bode_units();
+    test_mode_menu_keys();
     test_settings_export();
     test_settings_factory_reset();
     test_editor_leading_zeros();

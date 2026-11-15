@@ -12,6 +12,8 @@
 #include "usb_msc.h"
 #include "bootloader.h"
 #include "fft.h"
+#include "gfx.h"
+#include "ui_icons.h"
 #include "arb_csv.h"
 
 #include <stdint.h>
@@ -410,7 +412,6 @@ static char dmm_rel_unit[6];
 static char dmm_rel_value[12];
 static char dmm_rel_ref_value[10];
 static char dmm_low_current_value[10];
-static char dmm_status_detail[18];
 static settings_state_t ui_settings;
 
 static void ui_settings_copy(settings_state_t *dst, const settings_state_t *src) {
@@ -525,7 +526,6 @@ enum {
 
 static const uint16_t C_BG = RGB565(2, 4, 8);
 static const uint16_t C_TOP = RGB565(8, 14, 22);
-static const uint16_t C_PANEL = RGB565(14, 22, 32);
 static const uint16_t C_PANEL_2 = RGB565(20, 30, 44);
 static const uint16_t C_GRID = RGB565(26, 36, 48);
 static const uint16_t C_TEXT = RGB565(250, 252, 255);
@@ -536,11 +536,33 @@ static const uint16_t C_CH2 = RGB565(0, 242, 254);
 static const uint16_t C_DMM = RGB565(52, 211, 153);
 static const uint16_t C_SCOPE = RGB565(56, 189, 248);
 static const uint16_t C_GEN = RGB565(192, 132, 252);
-static const uint16_t C_MENU_SCOPE = RGB565(56, 189, 248);
-static const uint16_t C_MENU_GEN = RGB565(192, 132, 252);
-static const uint16_t C_MENU_SETTINGS = RGB565(251, 146, 60);
 static const uint16_t C_BATT = RGB565(52, 211, 153);
 static const uint16_t C_BATT_FULL = RGB565(52, 211, 153);
+
+// Modern UI palette (multimeter, menu, settings, scope).
+static const uint16_t D_BG = RGB565(11, 14, 19);
+static const uint16_t D_CARD = RGB565(21, 26, 34);
+static const uint16_t D_TRACK = RGB565(38, 45, 58);
+static const uint16_t D_TEXT = RGB565(243, 245, 249);
+static const uint16_t D_SUB = RGB565(199, 207, 219);
+static const uint16_t D_MUTED = RGB565(138, 148, 166);
+static const uint16_t D_ACCENT = RGB565(90, 200, 250);
+static const uint16_t D_ACCENT_TINT = RGB565(31, 58, 73);
+static const uint16_t D_AMBER = RGB565(255, 181, 71);
+static const uint16_t D_RED = RGB565(255, 92, 108);
+static const uint16_t D_RED_TEXT = RGB565(255, 122, 134);
+static const uint16_t D_RED_CARD = RGB565(58, 18, 25);
+static const uint16_t D_RED_SUB = RGB565(255, 201, 207);
+static const uint16_t D_RED_LINE = RGB565(90, 30, 39);
+static const uint16_t D_GREEN = RGB565(52, 211, 153);
+static const uint16_t D_GREEN_CARD = RGB565(16, 36, 28);
+static const uint16_t D_GREEN_TINT = RGB565(27, 68, 52);
+static const uint16_t D_GREEN_SUB = RGB565(185, 233, 211);
+static const uint16_t D_GEN = RGB565(167, 139, 250);
+static const uint16_t D_SCOPE = RGB565(52, 211, 153);
+static const uint16_t D_PLOT = RGB565(14, 18, 25);
+static const uint16_t D_PLOT_DOT = RGB565(52, 62, 78);
+static const uint16_t D_PLOT_AXIS = RGB565(86, 100, 118);
 
 enum {
     DMM_MODE_AUTO,
@@ -603,16 +625,6 @@ enum {
     SCOPE_MEASURE_COUNT,
 };
 
-static const char *const dmm_mode_names[] = {
-    "AUTO DETECT", "DC VOLTAGE", "AC VOLTAGE", "RESISTANCE",
-    "DIODE", "CAPACITANCE", "LIVE WIRE", "CONTINUITY",
-    "TEMPERATURE", "AC HIGH CURR", "DC HIGH CURR",
-    "AC LOW CURR", "DC LOW CURR",
-};
-static const char *const dmm_mode_short[] = {
-    "AUTO", "DCV", "ACV", "RES", "DIODE", "CAP", "LIVE",
-    "CONT", "TEMP", "AC HI", "DC HI", "AC LO", "DC LO",
-};
 static const char *const dmm_values[] = {
     "12.346", "12.346", "0.218", "1.204", "0.624", "0.047",
     "LIVE", "0.000", "23.8", "0.000", "0.000", "0.000", "0.000",
@@ -677,7 +689,6 @@ static const char *const scope_display_short[] = {"YT", "ROLL", "XY"};
 static const char *const scope_cursor_labels[] = {"CUR OFF", "T CUR", "Y CUR", "B CUR"};
 static const char *const scope_cursor_short[] = {"OFF", "T", "Y", "B"};
 static const char *const scope_trigger_short[] = {"AUTO", "NORM", "SNGL"};
-static const char *const scope_measure_labels[] = {"VPP", "VMAX", "VMIN", "VAVG", "VRMS", "FREQ"};
 static const char *const scope_param_labels[] = {
     "VIEW", "ON", "PROBE", "V/DIV", "COUP", "ZERO", "POS", "TIME", "TRIG", "CUR",
     "SRC", "LEVEL", "MODE", "EDGE", "MEAS",
@@ -699,16 +710,6 @@ static const uint8_t scope_trigger_param_order[] = {
     SCOPE_PARAM_TRIG_EDGE,
     SCOPE_PARAM_TRIG_TYPE,
     SCOPE_PARAM_TRIG_LEVEL,
-};
-static const char *const gen_wave_labels[] = {
-    "SINE", "RECT", "SAW", "HALF", "FULL",
-    "P STEP", "R STEP", "EXP UP", "EXP DN", "DC",
-    "MULTI AUD", "SINK PLS", "LORENTZ", "TRIANGLE", "NOISE", "ARBITRARY",
-};
-static const char *const gen_wave_short_labels[] = {
-    "SINE", "RECT", "SAW", "HALF", "FULL",
-    "PSTEP", "RSTEP", "EXP+", "EXP-", "DC",
-    "MULTI", "SINK", "LOR", "TRI", "NOISE", "ARBT",
 };
 static const uint8_t gen_wave_order[] = {
     SIGGEN_WAVE_SINE,
@@ -733,10 +734,6 @@ static const char *const gen_param_labels[] = {"WAVE", "FREQ", "DUTY", "AMP"};
 // own copy, which is how "KHZ" survived in some of them long after the
 // rest of the screen had learned to spell it.
 static const char *const freq_unit_labels[] = {"Hz", "kHz", "MHz"};
-static const char *const menu_labels[] = {"MULTIMETER", "OSCILLOSCOPE", "SIGNAL GENERATOR", "SETTINGS"};
-static const char *const settings_row_labels[] = {
-    "BEEP", "DISPLAY", "START", "SLEEP", "BOOTLOADER", "RESET", "INFO",
-};
 static const char *const startup_labels[] = {"MENU", "DMM", "SCOPE", "GEN"};
 static const char *const beep_level_labels[] = {"OFF", "LOW", "MEDIUM", "HIGH", "MAX"};
 static const char *const brightness_level_labels[] = {"DIM", "LOW", "MEDIUM", "HIGH", "BRIGHT"};
@@ -773,9 +770,6 @@ static uint32_t scope_vdiv_mv(void);
 static int32_t scope_raw_delta_mv(uint8_t idx, uint8_t raw);
 static void scope_format_signed_mv(char out[11], int32_t mv);
 static void scope_format_u32(char *out, uint32_t value);
-static void draw_digit_field(uint16_t x, uint16_t y, uint32_t value,
-                             uint8_t editing, uint8_t edit_index,
-                             const char *unit, uint16_t fg, uint16_t bg);
 static uint16_t scope_visible_sample_count(void);
 static int32_t scope_h_pos_sample_offset(void);
 static uint16_t scope_capture_window_start(void);
@@ -826,26 +820,6 @@ static uint16_t mode_accent(void) {
         return C_GEN;
     }
     return C_DMM;
-}
-
-static const char *mode_title(void) {
-    if (ui.mode == UI_MODE_SCOPE) {
-        return "OSCILLOSCOPE";
-    }
-    if (ui.mode == UI_MODE_GEN) {
-        return "SIGNAL GENERATOR";
-    }
-    return "MULTIMETER";
-}
-
-static const char *mode_short(ui_mode_t mode) {
-    if (mode == UI_MODE_SCOPE) {
-        return "OSC";
-    }
-    if (mode == UI_MODE_GEN) {
-        return "SIG";
-    }
-    return "DMM";
 }
 
 static void format_percent(char out[5]) {
@@ -1003,28 +977,6 @@ static void format_gen_freq_digits(char out[5]) {
     out[2] = (char)('0' + (value / 10u) % 10u);
     out[3] = (char)('0' + value % 10u);
     out[4] = 0;
-}
-
-static void gen_freq_draw_unit(uint16_t x, uint16_t y, uint8_t unit, uint16_t fg, uint16_t bg, uint8_t selected) {
-    uint16_t text = selected ? C_TEXT : fg;
-
-    if (unit > 2u) {
-        unit = 0;
-    }
-    if (unit == 0u) {
-        lcd_text(x, (uint16_t)(y + 4u), "Hz", text, bg, 1);
-        if (selected) {
-            lcd_rect(x, (uint16_t)(y + 14u), 12, 2, C_TEXT);
-        }
-    } else {
-        // k for kilo, M for mega: the case is the unit.
-        char prefix[2] = {unit == 1u ? 'k' : 'M', 0};
-        lcd_text((uint16_t)(x + 3u), y, prefix, text, bg, 1);
-        lcd_text(x, (uint16_t)(y + 10u), "Hz", text, bg, 1);
-        if (selected) {
-            lcd_rect(x, (uint16_t)(y + 20u), 12, 2, C_TEXT);
-        }
-    }
 }
 
 static uint8_t battery_display_full(void) {
@@ -1186,22 +1138,6 @@ static void draw_battery_status_overlay(uint16_t bg) {
     draw_battery(280, 7, bg);
 }
 
-static void draw_header(void) {
-    uint16_t accent = mode_accent();
-    lcd_rect(0, Y_HEADER, LCD_WIDTH, H_HEADER, C_TOP);
-    lcd_rect(0, (uint16_t)(H_HEADER - 2), LCD_WIDTH, 2, accent);
-    lcd_text(8, 6, mode_title(), C_TEXT, C_TOP, 2);
-
-    draw_battery_status_header();
-}
-
-static void draw_micro_status(uint16_t x, uint16_t y, uint16_t bg) {
-    uint16_t accent = mode_accent();
-    lcd_rect(x, y, 118, 13, bg);
-    lcd_rect(x, y, 3, 13, accent);
-    lcd_text((uint16_t)(x + 7), (uint16_t)(y + 4), mode_title(), C_TEXT, bg, 1);
-}
-
 static const char *fw_update_status_text(const fw_update_status_t *status) {
     if (status->state == FW_UPDATE_STATE_STAGING) {
         return "RECEIVING";
@@ -1224,107 +1160,9 @@ static const char *fw_update_status_text(const fw_update_status_t *status) {
     return "";
 }
 
-static void draw_fw_update_overlay(uint16_t bg) {
-    fw_update_status_t status;
-    char bytes[11];
-    char line[32];
-    uint16_t x = 36;
-    uint16_t y = 82;
-    uint16_t w = 248;
-    uint16_t h = 72;
-    uint16_t box_bg;
-    uint16_t box_fg;
-
-    fw_update_status(&status);
-    if (status.state == FW_UPDATE_STATE_IDLE) {
-        return;
-    }
-
-    box_bg = status.state == FW_UPDATE_STATE_ERROR ? RGB565(64, 24, 28) : C_TEXT;
-    box_fg = status.state == FW_UPDATE_STATE_ERROR ? C_TEXT : C_BG;
-    lcd_rect(x, y, w, h, box_bg);
-    lcd_frame(x, y, w, h, status.state == FW_UPDATE_STATE_ERROR ? C_WARN : C_PANEL_2);
-    lcd_text_center(x, (uint16_t)(y + 9u), w, "FIRMWARE UPDATE", box_fg, box_bg, 2);
-    lcd_text_center(x, (uint16_t)(y + 34u), w, fw_update_status_text(&status), box_fg, box_bg, 1);
-
-    scope_format_u32(bytes, status.bytes / 1024u);
-    line[0] = 0;
-    ui_text_append(line, bytes, sizeof(line));
-    ui_text_append(line, " KB", sizeof(line));
-    lcd_text_center(x, (uint16_t)(y + 50u), w, line, box_fg, box_bg, 1);
-
-    (void)bg;
-}
-
-static void draw_screenshot_overlay(uint16_t bg) {
-    uint16_t x = 46;
-    uint16_t y = 86;
-    uint16_t w = 228;
-    uint16_t h = 66;
-    uint16_t box_bg;
-    uint16_t box_fg;
-    uint16_t accent;
-
-    if (!ui.screenshot_overlay_ms) {
-        return;
-    }
-
-    if (ui.screenshot_state == SCREENSHOT_STATE_SAVING) {
-        box_bg = C_TEXT;
-        box_fg = C_BG;
-        accent = C_PANEL_2;
-    } else if (ui.screenshot_state == SCREENSHOT_STATE_OK) {
-        box_bg = C_TEXT;
-        box_fg = C_BG;
-        accent = C_DMM;
-    } else {
-        box_bg = RGB565(64, 24, 28);
-        box_fg = C_TEXT;
-        accent = C_WARN;
-    }
-    lcd_rect(x, y, w, h, box_bg);
-    lcd_frame(x, y, w, h, accent);
-    lcd_rect(x, y, w, 4, accent);
-    lcd_text_center(x, (uint16_t)(y + 12u), w, "SCREENSHOT", box_fg, box_bg, 2);
-    if (ui.screenshot_state == SCREENSHOT_STATE_SAVING) {
-        lcd_text_center(x, (uint16_t)(y + 38u), w, "SAVING TO USB", box_fg, box_bg, 1);
-    } else if (ui.screenshot_state == SCREENSHOT_STATE_OK) {
-        lcd_text_center(x, (uint16_t)(y + 38u), w, "SAVED TO USB", box_fg, box_bg, 1);
-    } else {
-        // Say which failure it was. A full drive is the only one the user
-        // can do anything about, so it gets the line that says what to do.
-        const char *reason = "SAVE ERROR";
-        const char *hint = 0;
-        if (ui.screenshot_reason == SCREENSHOT_SAVE_FULL) {
-            reason = "DRIVE FULL";
-            hint = "DELETE IMG FILES FROM THE PC";
-        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_SLOT) {
-            reason = "TOO MANY FILES";
-            hint = "DELETE IMG FILES FROM THE PC";
-        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_BUSY) {
-            reason = "DRIVE BUSY";
-            hint = "THE PC IS READING IT - RETRY";
-        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_VOLUME) {
-            reason = "NO USB DRIVE";
-        }
-        lcd_text_center(x, (uint16_t)(y + 36u), w, reason, box_fg, box_bg, 1);
-        if (hint) {
-            lcd_text_center(x, (uint16_t)(y + 50u), w, hint, box_fg, box_bg, 1);
-        }
-    }
-    (void)bg;
-}
-
-static void draw_mode_tabs(void) {
-    uint16_t x = 10;
-    for (uint8_t i = 0; i < (uint8_t)UI_MODE_COUNT; ++i) {
-        uint16_t bg = i == (uint8_t)ui.mode ? mode_accent() : C_PANEL_2;
-        uint16_t fg = i == (uint8_t)ui.mode ? C_BG : C_MUTED;
-        lcd_rect(x, 32, 46, 16, bg);
-        lcd_text_center(x, 36, 46, mode_short((ui_mode_t)i), fg, bg, 1);
-        x = (uint16_t)(x + 50);
-    }
-}
+// Redrawn as rounded dialogs further down, next to the other modern UI.
+static void draw_fw_update_overlay(uint16_t bg);
+static void draw_screenshot_overlay(uint16_t bg);
 
 static uint8_t dmm_group_first(uint8_t mode) {
     if (mode >= DMM_MODE_AC_HI_CURR) {
@@ -1678,30 +1516,6 @@ enum {
     SCOPE_RANGE_FIELD_W = 96,
 };
 
-// One channel's range in the bottom bar. "CH1 2V" fits at full size,
-// "CH1 500mV" does not, so the unit drops to half size -- but only when
-// it has to: a lone "V" at half size reads as a lower case v.
-static void draw_scope_channel_range(uint16_t x, uint16_t y, const char *name,
-                                     uint8_t idx, uint16_t color, uint16_t bg) {
-    char text[12];
-    const char *value;
-    const char *unit;
-
-    scope_vdiv_display(idx, &value, &unit);
-    scope_text_copy(text, name, sizeof(text));
-    ui_text_append(text, " ", sizeof(text));
-    ui_text_append(text, value, sizeof(text));
-    if (lcd_text_width(text, 2) + lcd_text_width(unit, 2) <= SCOPE_RANGE_FIELD_W) {
-        ui_text_append(text, unit, sizeof(text));
-        lcd_text(x, y, text, color, bg, 2);
-        return;
-    }
-    lcd_text(x, y, text, color, bg, 2);
-    // Sat on the digits' own baseline: they stop two rows short of the
-    // bottom of the cell, so a unit hung off the cell would sit low.
-    lcd_text((uint16_t)(x + lcd_text_width(text, 2)), (uint16_t)(y + 5u), unit, color, bg, 1);
-}
-
 static const char *scope_vdiv_menu_label(void) {
     static char label[8];
     const char *value;
@@ -1723,17 +1537,7 @@ static const char *scope_vdiv_chip_label_for_channel(uint8_t idx) {
     return scope_probe_x10[idx] ? scope_vdivs_x10_short[vdiv] : scope_vdivs_short[vdiv];
 }
 
-static void draw_scope_scale_status(uint16_t y, uint16_t bg) {
-    if (scope_ch_enabled[0]) {
-        draw_scope_channel_range(0, y, "CH1", 0, C_CH1, bg);
-    }
-    lcd_text_center(96, y, 72, scope_timebase_label(), C_TEXT, bg, 2);
-    lcd_text_center(168, y, 56, ui.running ? (scope_slow_roll_active() ? "ROLL" : "RUN") : "HOLD",
-                    ui.running ? C_DMM : C_WARN, bg, 2);
-    if (scope_ch_enabled[1]) {
-        draw_scope_channel_range(224, y, "CH2", 1, C_CH2, bg);
-    }
-}
+static void draw_scope_scale_status(uint16_t y, uint16_t bg);
 
 static const char *scope_channel_enable_label(void) {
     return scope_ch_enabled[ui.active_ch == 2u ? 1u : 0u] ? "ON" : "OFF";
@@ -1840,28 +1644,116 @@ static void math_menu_step_selected(int8_t dir) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Shared helpers for the modern scope overlays and list menus.
+// ---------------------------------------------------------------------------
+
+static void scope_pretty_value(const char *in, char *out, uint8_t size);
+static void ui_text_append(char *dst, const char *src, uint8_t max_len);
+static uint8_t editor_dim_digits(const char *digits, uint8_t count);
+static void ui_text_copy(char *dst, const char *src, uint8_t max_len);
+static uint16_t scope_tint(uint16_t color, uint16_t under);
+static uint16_t scope_pill_width(const char *label, const char *value);
+static void scope_draw_pill(int16_t x, uint16_t y, const char *label, const char *value,
+                            uint16_t fill, uint16_t label_fg, uint16_t value_fg, uint16_t under);
+
+// A label on the plot: small smooth type, units spaced and cased.
+static void scope_plot_label(int16_t x, int16_t y, const char *text, uint16_t color) {
+    char pretty[20];
+    scope_pretty_value(text, pretty, sizeof(pretty));
+    gfx_text(x, (int16_t)(y - 2), &font_small, pretty, color, D_PLOT);
+}
+
+static void scope_plot_label_right(int16_t right, int16_t y, const char *text, uint16_t color) {
+    char pretty[20];
+    scope_pretty_value(text, pretty, sizeof(pretty));
+    gfx_text_right(right, (int16_t)(y - 2), &font_small, pretty, color, D_PLOT);
+}
+
+static void ui_draw_editor_digits(int16_t x, uint16_t y, const char *digits, uint8_t count,
+                                  int8_t selected, uint8_t dim, uint16_t accent, uint16_t fg, uint16_t bg);
+
+// Modern list panel: a rounded card with a title row and value rows. Used
+// by the scope's Analytical/Math menu and the generator's Sweep/FM menu.
+enum {
+    UI_LIST_X = 28,
+    UI_LIST_W = 264,
+    UI_LIST_ROW_H = 19,
+    UI_LIST_HEAD_H = 32,
+};
+
+static uint16_t ui_list_begin(const char *title, const char *icon, uint16_t accent, uint16_t tint, uint8_t rows) {
+    uint16_t h = (uint16_t)(UI_LIST_HEAD_H + rows * UI_LIST_ROW_H + 8u);
+    uint16_t y = (uint16_t)((LCD_HEIGHT - h) / 2u + 4u);
+    gfx_round_rect(UI_LIST_X - 4u, (uint16_t)(y - 4u), UI_LIST_W + 8u, (uint16_t)(h + 8u), 18, D_BG, D_BG);
+    gfx_round_rect(UI_LIST_X, y, UI_LIST_W, h, 14, accent, D_BG);
+    gfx_round_rect(UI_LIST_X + 2u, (uint16_t)(y + 2u), UI_LIST_W - 4u, (uint16_t)(h - 4u), 12, D_CARD, accent);
+    gfx_round_rect(UI_LIST_X + 10u, (uint16_t)(y + 8u), 20, 20, 6, tint, D_CARD);
+    gfx_text((int16_t)(UI_LIST_X + 14u), (int16_t)(y + 12u), &font_icons, icon, accent, tint);
+    gfx_text(UI_LIST_X + 38, (int16_t)(y + 9u), &font_medium, title, D_TEXT, D_CARD);
+    return (uint16_t)(y + UI_LIST_HEAD_H);
+}
+
+// One row; returns the row's fill so a caller can draw a custom value.
+static uint16_t ui_list_row(uint16_t y, const char *label, const char *value,
+                            uint8_t selected, uint8_t enabled, uint16_t accent) {
+    uint16_t fill = selected ? gfx_blend(accent, D_CARD, 4) : D_CARD;
+    uint16_t label_fg = !enabled ? D_TRACK : (selected ? D_TEXT : D_MUTED);
+    uint16_t value_fg = !enabled ? D_TRACK : (selected ? accent : D_SUB);
+    if (selected) {
+        gfx_round_rect(UI_LIST_X + 8u, y, UI_LIST_W - 16u, UI_LIST_ROW_H - 2u, 6, fill, D_CARD);
+    }
+    gfx_text(UI_LIST_X + 16, (int16_t)(y + 1u), &font_medium, label, label_fg, fill);
+    if (value) {
+        gfx_text_right(UI_LIST_X + UI_LIST_W - 16, (int16_t)(y + 1u), &font_medium, value, value_fg, fill);
+    }
+    return fill;
+}
+
+// A four-digit number and unit, right-aligned in a row, editable digit by
+// digit (edit_index 4 is the unit).
+static void ui_list_digits(uint16_t y, uint32_t value, uint8_t editing, uint8_t edit_index,
+                           const char *unit, uint8_t selected, uint8_t enabled, uint16_t accent, uint16_t fill) {
+    char digits[5];
+    uint16_t adv = gfx_text_width(&font_medium, "0");
+    uint16_t unit_w = unit ? (uint16_t)(gfx_text_width(&font_medium, unit) + 4u) : 0u;
+    int16_t x = (int16_t)(UI_LIST_X + UI_LIST_W - 16 - (int16_t)(adv * 4u + unit_w));
+    uint16_t fg = !enabled ? D_TRACK : (selected ? accent : D_SUB);
+
+    digits[0] = (char)('0' + ((value / 1000u) % 10u));
+    digits[1] = (char)('0' + ((value / 100u) % 10u));
+    digits[2] = (char)('0' + ((value / 10u) % 10u));
+    digits[3] = (char)('0' + (value % 10u));
+    digits[4] = 0;
+    ui_draw_editor_digits(x, (uint16_t)(y + 1u), digits, 4, editing && edit_index < 4u ? (int8_t)edit_index : -1,
+                          editor_dim_digits(digits, 4), accent, fg, fill);
+    if (unit) {
+        int16_t ux = (int16_t)(x + (int16_t)(adv * 4u) + 4);
+        if (editing && edit_index == 4u) {
+            gfx_round_rect((uint16_t)(ux - 2), (uint16_t)(y + 1u), (uint16_t)(unit_w), 16, 4, accent, fill);
+            gfx_text(ux, (int16_t)(y + 1u), &font_medium, unit, D_BG, accent);
+        } else {
+            gfx_text(ux, (int16_t)(y + 1u), &font_medium, unit, fg, fill);
+        }
+    }
+}
+
 static void ui_draw_math_menu(void) {
+    static const char *const math_status_text[] = {"Off", "On"};
+    static const char *const math_op_text[] = {"CH1 + CH2", "CH1 - CH2", "CH2 - CH1"};
+    static const char *const fft_status_text[] = {"Normal", "FFT CH1", "FFT CH2", "X-Y", "Bode plot"};
+    static const char *const fft_window_text[] = {"Hann", "Hamming", "Blackman", "Rectangle"};
+    static const char *const fft_display_text[] = {"Normal", "Averaging", "Max hold"};
+    static const char *const hide_traces_text[] = {"None", "CH1", "CH2", "All"};
+    const uint8_t *menu;
+    uint8_t rows;
+    uint8_t fft_on = (uint8_t)(scope_fft_src == 1u || scope_fft_src == 2u);
+    uint16_t y;
+
     if (!ui_math_menu_visible) {
         return;
     }
-
-    const char *math_status_text[] = { "OFF", "ON" };
-    const char *math_op_text[]     = { "CH1 + CH2", "CH1 - CH2", "CH2 - CH1" };
-    const char *fft_status_text[]  = { "OFF", "FFT CH1", "FFT CH2", "XY MODE", "BODE PLOT" };
-    const char *fft_window_text[]  = { "HANN", "HAMMING", "BLACKMAN", "RECTANGLE" };
-    const char *fft_display_text[] = { "NORMAL", "AVERAGING", "MAX HOLD" };
-    const char *hide_traces_text[] = { "NONE", "CH1", "CH2", "ALL" };
-
-    const uint8_t *menu;
-    uint8_t rows;
-
-    uint16_t box_x = 50;
-    uint16_t box_y = 60;
-    uint16_t box_w = 220;
-    uint16_t row_y;
-    uint16_t color_bg;
-    uint16_t color_fg;
-
     if (scope_fft_src == 4u) {
         menu = bode_menu_order;
         rows = sizeof(bode_menu_order) / sizeof(bode_menu_order[0]);
@@ -1870,115 +1762,51 @@ static void ui_draw_math_menu(void) {
         rows = sizeof(math_menu_order) / sizeof(math_menu_order[0]);
     }
 
-    uint16_t box_h = (uint16_t)(36u + rows * 18u);
-
-    // Draw menu background and frame
-    lcd_rect(box_x, box_y, box_w, box_h, RGB565(30, 30, 45));
-    lcd_frame(box_x, box_y, box_w, box_h, RGB565(255, 165, 0));
-
-    lcd_text(box_x + 10, box_y + 8, "MATH / BODE MENU", RGB565(255, 255, 255), RGB565(30, 30, 45), 1);
-    lcd_rect(box_x + 10, box_y + 20, box_w - 20, 1, RGB565(100, 100, 100));
-
-    row_y = box_y + 26;
-
-    for (uint8_t row = 0; row < rows; row++) {
-        uint8_t item = menu[row];
-
-        color_bg = (scope_math_selected == row) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-        color_fg = RGB565(255, 255, 255);
-
-        lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-
-        switch (item) {
-            case MENU_ITEM_PLOT:
-                lcd_text(box_x + 12, row_y + 3, "PLOT MODE:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, fft_status_text[scope_fft_src], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_FFT_WINDOW:
-                if (scope_fft_src != 1 && scope_fft_src != 2) color_fg = RGB565(120, 120, 120);
-                lcd_text(box_x + 12, row_y + 3, "FFT WINDOW:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, fft_window_text[scope_fft_window], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_FFT_DISPLAY:
-                if (scope_fft_src != 1 && scope_fft_src != 2) color_fg = RGB565(120, 120, 120);
-                lcd_text(box_x + 12, row_y + 3, "FFT DISPLAY:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, fft_display_text[scope_fft_display], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_MATH_MODE:
-                lcd_text(box_x + 12, row_y + 3, "MATH MODE:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, math_status_text[scope_math_mode], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_MATH_OP:
-                if (!scope_math_mode) color_fg = RGB565(120, 120, 120);
-                lcd_text(box_x + 12, row_y + 3, "MATH OP:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, math_op_text[scope_math_op], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_HIDE_TRACES:
-                lcd_text(box_x + 12, row_y + 3, "HIDE TRACES:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, hide_traces_text[scope_hide_traces], color_fg, color_bg, 1);
-                break;
-
-            case MENU_ITEM_BODE_START:
-                lcd_text(box_x + 12, row_y + 3, "START FREQ:", color_fg, color_bg, 1);
-                draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3),
-                                 freq_clamp_display(bode_start_hz, bode_start_unit),
-                                 (uint8_t)(ui_edit_digit_active && scope_math_selected == row),
-                                 ui_edit_digit_index,
-                                 freq_unit_labels[bode_start_unit < 3u ? bode_start_unit : 0u],
-                                 color_fg, color_bg);
-                break;
-
-            case MENU_ITEM_BODE_STOP:
-                lcd_text(box_x + 12, row_y + 3, "STOP FREQ:", color_fg, color_bg, 1);
-                draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3),
-                                 freq_clamp_display(bode_stop_hz, bode_stop_unit),
-                                 (uint8_t)(ui_edit_digit_active && scope_math_selected == row),
-                                 ui_edit_digit_index,
-                                 freq_unit_labels[bode_stop_unit < 3u ? bode_stop_unit : 0u],
-                                 color_fg, color_bg);
-                break;
-
-            case MENU_ITEM_BODE_STEPS:
-                lcd_text(box_x + 12, row_y + 3, "STEPS:", color_fg, color_bg, 1);
-                {
-                    char steps_digits[5];
-                    steps_digits[0] = (char)('0' + ((bode_steps / 1000) % 10));
-                    steps_digits[1] = (char)('0' + ((bode_steps / 100) % 10));
-                    steps_digits[2] = (char)('0' + ((bode_steps / 10) % 10));
-                    steps_digits[3] = (char)('0' + (bode_steps % 10));
-                    steps_digits[4] = '\0';
-
-                    if (ui_edit_digit_active && scope_math_selected == row) {
-                        for (uint8_t d = 0; d < 4u; ++d) {
-                            uint16_t dx = (uint16_t)(box_x + 110 + (d * 6));
-                            char d_str[2] = { steps_digits[d], '\0' };
-                            if (d == ui_edit_digit_index) {
-                                lcd_rect(dx, (uint16_t)(row_y + 2), 6, 10, RGB565(255, 255, 255));
-                                lcd_text(dx, row_y + 3, d_str, RGB565(0, 120, 240), RGB565(255, 255, 255), 1);
-                            } else {
-                                lcd_text(dx, row_y + 3, d_str, color_fg, color_bg, 1);
-                            }
-                        }
-                    } else {
-                        lcd_text(box_x + 110, row_y + 3, steps_digits, color_fg, color_bg, 1);
-                    }
-                }
-                break;
-
-            case MENU_ITEM_BODE_SWEEP:
-                lcd_text(box_x + 12, row_y + 3, "SWEEP:", color_fg, color_bg, 1);
-                lcd_text(box_x + 110, row_y + 3, bode_is_sweeping ? "RUNNING" : "RE-SWEEP", color_fg, color_bg, 1);
-                break;
+    y = ui_list_begin(scope_fft_src == 4u ? "Bode plot" : "Analytical / Math", ICON_SCOPE_SM, D_SCOPE,
+                      gfx_blend(D_SCOPE, D_CARD, 4), rows);
+    for (uint8_t row = 0; row < rows; ++row, y = (uint16_t)(y + UI_LIST_ROW_H)) {
+        uint8_t sel = scope_math_selected == row;
+        uint8_t editing = (uint8_t)(ui_edit_digit_active && sel);
+        uint16_t fill;
+        switch (menu[row]) {
+        case MENU_ITEM_PLOT:
+            ui_list_row(y, "Plot", fft_status_text[scope_fft_src], sel, 1, D_SCOPE);
+            break;
+        case MENU_ITEM_FFT_WINDOW:
+            ui_list_row(y, "FFT window", fft_window_text[scope_fft_window], sel, fft_on, D_SCOPE);
+            break;
+        case MENU_ITEM_FFT_DISPLAY:
+            ui_list_row(y, "FFT display", fft_display_text[scope_fft_display], sel, fft_on, D_SCOPE);
+            break;
+        case MENU_ITEM_MATH_MODE:
+            ui_list_row(y, "Math", math_status_text[scope_math_mode ? 1 : 0], sel, 1, D_SCOPE);
+            break;
+        case MENU_ITEM_MATH_OP:
+            ui_list_row(y, "Operation", math_op_text[scope_math_op], sel, scope_math_mode, D_SCOPE);
+            break;
+        case MENU_ITEM_HIDE_TRACES:
+            ui_list_row(y, "Hide traces", hide_traces_text[scope_hide_traces], sel, 1, D_SCOPE);
+            break;
+        case MENU_ITEM_BODE_START:
+            fill = ui_list_row(y, "Start freq", 0, sel, 1, D_SCOPE);
+            ui_list_digits(y, freq_clamp_display(bode_start_hz, bode_start_unit), editing, ui_edit_digit_index,
+                           freq_unit_labels[bode_start_unit < 3u ? bode_start_unit : 0u], sel, 1, D_SCOPE, fill);
+            break;
+        case MENU_ITEM_BODE_STOP:
+            fill = ui_list_row(y, "Stop freq", 0, sel, 1, D_SCOPE);
+            ui_list_digits(y, freq_clamp_display(bode_stop_hz, bode_stop_unit), editing, ui_edit_digit_index,
+                           freq_unit_labels[bode_stop_unit < 3u ? bode_stop_unit : 0u], sel, 1, D_SCOPE, fill);
+            break;
+        case MENU_ITEM_BODE_STEPS:
+            fill = ui_list_row(y, "Steps", 0, sel, 1, D_SCOPE);
+            ui_list_digits(y, bode_steps, editing, ui_edit_digit_index, 0, sel, 1, D_SCOPE, fill);
+            break;
+        case MENU_ITEM_BODE_SWEEP:
+            ui_list_row(y, "Sweep", bode_is_sweeping ? "Running" : "Start again", sel, 1, D_SCOPE);
+            break;
         }
-        row_y += 18u;
     }
 }
-
 
 static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
     if (scope_fft_src != 1u && scope_fft_src != 2u) {
@@ -2079,24 +1907,17 @@ static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t
     float f_max_hz = sample_rate_hz / 2.0f;
     float hz_per_bin = sample_rate_hz / (float)FFT_SIZE;
 
-    uint16_t bar_color = RGB565(0, 180, 255);
-    uint16_t axis_color = RGB565(150, 150, 150);
-    uint16_t text_bg = RGB565(30, 30, 45);
+    uint16_t bar_color = target_ch ? C_CH2 : C_CH1;
+    uint16_t axis_color = D_PLOT_AXIS;
     uint16_t y_bottom = (uint16_t)(gy + gh - 2u);
     uint16_t y_axis_top = (uint16_t)(gy + 2u);
     char freq_label[12];
 
     lcd_line(gx, y_axis_top, (uint16_t)(gx + gw), y_axis_top, axis_color);
-    lcd_text(gx, (uint16_t)(y_axis_top + 4u), "0.0Hz", RGB565(180, 180, 180), text_bg, 1);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(y_axis_top + 4u), "0 Hz", D_MUTED);
 
     scope_format_frequency_reading(freq_label, (uint32_t)(f_max_hz + 0.5f));
-    uint16_t fw = lcd_text_width(freq_label, 1);
-    lcd_text(gx + gw > fw ? (uint16_t)(gx + gw - fw) : gx,
-             (uint16_t)(y_axis_top + 4u),
-             freq_label,
-             RGB565(180, 180, 180),
-             text_bg,
-             1);
+    scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(y_axis_top + 4u), freq_label, D_MUTED);
 
     for (uint16_t i = 1u; i < num_bins; ++i) {
         uint16_t x_pos = (uint16_t)(gx + ((uint32_t)i * gw) / num_bins);
@@ -2110,18 +1931,14 @@ static void ui_draw_fft_spectrum(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t
     }
 
     scope_format_frequency_reading(freq_label, (uint32_t)((float)peak_bin * hz_per_bin + 0.5f));
-    lcd_text((uint16_t)(gx + gw / 2u - 30u),
-             (uint16_t)(y_axis_top + 4u),
-             "PK",
-             RGB565(255, 255, 0),
-             text_bg,
-             1);
-    lcd_text((uint16_t)(gx + gw / 2u - 12u),
-             (uint16_t)(y_axis_top + 4u),
-             freq_label,
-             RGB565(255, 255, 0),
-             text_bg,
-             1);
+    {
+        char pretty[20];
+        uint16_t w;
+        scope_pretty_value(freq_label, pretty, sizeof(pretty));
+        w = scope_pill_width("Peak", pretty);
+        scope_draw_pill((int16_t)(gx + (gw - w) / 2u), (uint16_t)(y_axis_top + 3u), "Peak", pretty,
+                        scope_tint(D_AMBER, D_PLOT), D_AMBER, D_TEXT, D_PLOT);
+    }
 }
 
 static float fast_ln(float x) {
@@ -2518,10 +2335,9 @@ static void ui_draw_bode(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
     uint16_t mag_h;
     uint16_t phase_y;
     uint16_t phase_h;
-    uint16_t axis_color = RGB565(150, 150, 150);
-    uint16_t text_bg = RGB565(30, 30, 45);
-    uint16_t mag_color = RGB565(0, 180, 255);
-    uint16_t phase_color = RGB565(255, 180, 40);
+    uint16_t axis_color = D_PLOT_AXIS;
+    uint16_t mag_color = D_ACCENT;
+    uint16_t phase_color = D_AMBER;
     uint8_t completed;
     uint8_t steps = bode_clamp_steps(bode_steps);
     char label[16];
@@ -2551,23 +2367,19 @@ static void ui_draw_bode(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
     uint16_t phase_center_y = (uint16_t)(phase_y + (phase_h / 2u));
     lcd_line(x_start, phase_center_y, x_end, phase_center_y, axis_color);
     lcd_line(x_start, (uint16_t)(phase_y + phase_h), x_end, (uint16_t)(phase_y + phase_h), axis_color);
-    lcd_text(gx, (uint16_t)(gy + 2u), "MAG", RGB565(180, 180, 180), text_bg, 1);
-    lcd_text((uint16_t)(gx + gw - 46u), (uint16_t)(gy + 2u), "+20DB", RGB565(140, 140, 140), text_bg, 1);
-    lcd_text((uint16_t)(gx + gw - 34u), (uint16_t)(mag_0db_y - 4u), "0DB", RGB565(140, 140, 140), text_bg, 1);
-    lcd_text(gx, (uint16_t)(gy + mag_h - 5u), "-60", RGB565(140, 140, 140), text_bg, 1);
-    lcd_text(gx, (uint16_t)(phase_y + 2u), "PHASE", RGB565(180, 180, 180), text_bg, 1);
-    lcd_text((uint16_t)(gx + gw - 40u), (uint16_t)(phase_y + 2u), "+180", RGB565(140, 140, 140), text_bg, 1);
-    lcd_text(gx, (uint16_t)(phase_center_y - 4u), "0", RGB565(140, 140, 140), text_bg, 1);
-    lcd_text(gx, (uint16_t)(phase_y + phase_h - 10u), "-180", RGB565(140, 140, 140), text_bg, 1);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(gy + 4u), "GAIN", mag_color);
+    scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(gy + 4u), "+20DB", D_MUTED);
+    scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(mag_0db_y + 4u), "0DB", D_MUTED);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(gy + mag_h - 12u), "-60 dB", D_MUTED);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(phase_y + 3u), "PHASE", phase_color);
+    scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(phase_y + 3u), "+180", D_MUTED);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(phase_center_y - 12u), "0", D_MUTED);
+    scope_plot_label((int16_t)(gx + 6u), (int16_t)(phase_y + phase_h - 12u), "-180", D_MUTED);
 
     scope_format_frequency_reading(label, bode_start_hz);
-    lcd_text((uint16_t)(gx + 28u), (uint16_t)(gy + mag_h - 10u), label, RGB565(180, 180, 180), text_bg, 1);
+    scope_plot_label((int16_t)(gx + 52u), (int16_t)(gy + mag_h - 12u), label, D_SUB);
     scope_format_frequency_reading(label, bode_stop_hz);
-    lcd_text((uint16_t)(gx + gw - 56u), (uint16_t)(gy + mag_h - 10u), label, RGB565(180, 180, 180), text_bg, 1);
-    // scope_format_frequency_reading(label, bode_start_hz);
-    // lcd_text((uint16_t)(gx + 28u), (uint16_t)(phase_y + phase_h - 10u), label, RGB565(180, 180, 180), text_bg, 1);
-    // scope_format_frequency_reading(label, bode_stop_hz);
-    // lcd_text((uint16_t)(gx + gw - 56u), (uint16_t)(phase_y + phase_h - 10u), label, RGB565(180, 180, 180), text_bg, 1);
+    scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(gy + mag_h - 12u), label, D_SUB);
 
     for (i = 1; i < completed; ++i) {
         uint16_t x0 = (uint16_t)(gx + ((uint32_t)(i - 1u) * gw) / (uint32_t)(steps - 1u));
@@ -2582,23 +2394,18 @@ static void ui_draw_bode(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
 
     if (bode_is_sweeping) {
         char progress[20];
-        progress[0] = 'B';
-        progress[1] = 'O';
-        progress[2] = 'D';
-        progress[3] = 'E';
-        progress[4] = ' ';
-        scope_format_u32(&progress[5], (uint32_t)(bode_current_step + 1u));
-        ui_text_append(progress, "/", sizeof(progress));
-        {
-            char step_total[8];
-            scope_format_u32(step_total, (uint32_t)steps);
-            ui_text_append(progress, step_total, sizeof(progress));
-        }
-        lcd_text((uint16_t)(gx + 4u), (uint16_t)(gy + gh - 12u), progress, RGB565(255, 255, 0), text_bg, 1);
+        char total[8];
+        ui_text_copy(progress, "Sweeping ", sizeof(progress));
+        scope_format_u32(total, (uint32_t)(bode_current_step + 1u));
+        ui_text_append(progress, total, sizeof(progress));
+        ui_text_append(progress, " / ", sizeof(progress));
+        scope_format_u32(total, (uint32_t)steps);
+        ui_text_append(progress, total, sizeof(progress));
+        gfx_text((int16_t)(gx + 6u), (int16_t)(gy + gh - 14u), &font_small, progress, D_AMBER, D_PLOT);
         scope_format_frequency_reading(label, bode_step_freq_hz);
-        lcd_text((uint16_t)(gx + gw - 72u), (uint16_t)(gy + gh - 12u), label, RGB565(255, 255, 0), text_bg, 1);
+        scope_plot_label_right((int16_t)(gx + gw - 6u), (int16_t)(gy + gh - 12u), label, D_AMBER);
     } else if (completed > 0u) {
-        lcd_text((uint16_t)(gx + 4u), (uint16_t)(gy + gh - 12u), "BODE DONE", RGB565(180, 220, 180), text_bg, 1);
+        gfx_text((int16_t)(gx + 6u), (int16_t)(gy + gh - 14u), &font_small, "Sweep done", D_GREEN, D_PLOT);
     }
 }
 
@@ -2622,80 +2429,16 @@ static uint8_t dmm_group_selected(uint8_t group) {
     return ui.dmm_mode >= DMM_MODE_AC_HI_CURR;
 }
 
-static const char *dmm_group_value(uint8_t group) {
-    if (dmm_group_selected(group)) {
-        return dmm_mode_short[ui.dmm_mode];
-    }
-    if (group == 0u) {
-        return "DCV ACV RES";
-    }
-    if (group == 1u) {
-        return "DIODE CAP";
-    }
-    if (group == 2u) {
-        return "LIVE TEMP";
-    }
-    return "DC AC";
-}
+static void draw_dmm_softkeys(void);
 
-static void draw_dmm_selected_group_value(uint16_t x, uint16_t y, uint16_t w, const char *value, uint16_t bg) {
-    uint16_t text_w = lcd_text_width(value, 2);
-    uint16_t text_x = (uint16_t)(x + (w > text_w ? (w - text_w) / 2u : 0u));
-    uint16_t underline_w = text_w;
-    uint16_t underline_x;
-
-    if (underline_w > w - 12u) {
-        underline_w = (uint16_t)(w - 12u);
-    }
-    underline_x = (uint16_t)(x + (w - underline_w) / 2u);
-    lcd_text(text_x, (uint16_t)(y + 13u), value, C_TEXT, bg, 2);
-    lcd_rect(underline_x, (uint16_t)(y + 29u), underline_w, 2, C_TEXT);
-}
-
-static void draw_dmm_group_chip(uint16_t x, uint16_t y, uint16_t w, uint8_t group, const char *label) {
-    uint8_t active = dmm_group_selected(group);
-    uint16_t bg = active ? C_DMM : C_PANEL_2;
-    uint16_t fg = active ? C_BG : C_MUTED;
-
-    lcd_rect(x, y, w, 32, bg);
-    lcd_rect(x, y, w, 2, C_DMM);
-    lcd_text((uint16_t)(x + 6u), (uint16_t)(y + 4u), label, fg, bg, 1);
-    if (active) {
-        draw_dmm_selected_group_value(x, y, w, dmm_group_value(group), bg);
-    } else if (group == 3u) {
-        lcd_text_center(x, (uint16_t)(y + 13u), w, "HI LO", fg, bg, 1);
-        lcd_text_center(x, (uint16_t)(y + 23u), w, "DC AC", fg, bg, 1);
-    } else {
-        lcd_text_center(x, (uint16_t)(y + 18u), w, dmm_group_value(group), fg, bg, 1);
-    }
-}
-
-static void draw_dmm_softkeys(void) {
-    lcd_rect(0, Y_SOFT, LCD_WIDTH, H_SOFT, C_BG);
-    draw_dmm_group_chip(UI_PARAM_ROW_X, (uint16_t)(Y_SOFT + 4u), UI_PARAM_CHIP_W, 0, "V/OHM");
-    draw_dmm_group_chip((uint16_t)(UI_PARAM_ROW_X + UI_PARAM_CHIP_W + UI_PARAM_CHIP_GAP),
-                        (uint16_t)(Y_SOFT + 4u),
-                        UI_PARAM_CHIP_W,
-                        1,
-                        "TEST");
-    draw_dmm_group_chip((uint16_t)(UI_PARAM_ROW_X + (UI_PARAM_CHIP_W + UI_PARAM_CHIP_GAP) * 2u),
-                        (uint16_t)(Y_SOFT + 4u),
-                        UI_PARAM_CHIP_W,
-                        2,
-                        "SENSE");
-    draw_dmm_group_chip((uint16_t)(UI_PARAM_ROW_X + (UI_PARAM_CHIP_W + UI_PARAM_CHIP_GAP) * 3u),
-                        (uint16_t)(Y_SOFT + 4u),
-                        UI_PARAM_CHIP_W,
-                        3,
-                        "CURRENT");
-}
+static const char *scope_measure_pretty_label(uint8_t measure);
 
 static const char *scope_measure_chip_label(void) {
     scope_sanitize_state();
     if (!scope_measure_visible) {
         return "OFF";
     }
-    return scope_measure_labels[scope_measure_param];
+    return scope_measure_pretty_label(scope_measure_param);
 }
 
 static const char *scope_param_value(uint8_t param) {
@@ -2744,6 +2487,66 @@ static const char *scope_param_value(uint8_t param) {
     return scope_display_short[scope_safe_display()];
 }
 
+// ---------------------------------------------------------------------------
+// Parameter chips (scope and generator rows) in the modern style.
+// ---------------------------------------------------------------------------
+
+static void scope_pretty_value(const char *in, char *out, uint8_t size);
+static void ui_text_copy(char *dst, const char *src, uint8_t max_len);
+static uint8_t ui_text_equal(const char *a, const char *b);
+
+// Values as the chips show them: units spaced and cased ("20 mV", "1 µs"),
+// words in sentence case ("Auto", "Normal"), short codes kept (CH1, DC, X10).
+static void ui_chip_value(const char *in, char out[16]) {
+    uint8_t digits = 0;
+    uint8_t len = 0;
+    for (const char *p = in; *p; ++p, ++len) {
+        if (*p >= '0' && *p <= '9') {
+            digits = 1;
+        }
+    }
+    if (digits) {
+        scope_pretty_value(in, out, 16);
+        return;
+    }
+    ui_text_copy(out, in, 16);
+    if (len >= 4u || ui_text_equal(in, "ON") || ui_text_equal(in, "OFF")) {
+        for (uint8_t i = 1; out[i]; ++i) {
+            if (out[i] >= 'A' && out[i] <= 'Z' && out[i - 1u] != ' ') {
+                out[i] = (char)(out[i] + 32);
+            }
+        }
+    }
+}
+
+// Card behind a chip; returns its fill so the text can blend into it.
+static uint16_t ui_chip_frame(uint16_t x, uint16_t y, uint16_t w, uint16_t accent, uint8_t active) {
+    uint16_t bg = active ? gfx_blend(accent, D_BG, 3) : D_CARD;
+    if (active) {
+        gfx_round_rect(x, y, w, 32, 10, accent, D_BG);
+        gfx_round_rect((uint16_t)(x + 2u), (uint16_t)(y + 2u), (uint16_t)(w - 4u), 28, 8, bg, accent);
+    } else {
+        gfx_round_rect(x, y, w, 32, 10, bg, D_BG);
+    }
+    return bg;
+}
+
+static void ui_draw_chip(uint16_t x, uint16_t y, uint16_t w, const char *label, const char *value,
+                         uint16_t accent, uint8_t active, uint8_t enabled) {
+    char shown[16];
+    uint16_t bg = ui_chip_frame(x, y, w, accent, active);
+    uint16_t label_fg = !enabled ? D_TRACK : (active ? accent : D_MUTED);
+    uint16_t value_fg = !enabled ? D_TRACK : (active ? D_TEXT : D_SUB);
+    const lcd_font_t *font = &font_medium;
+
+    ui_chip_value(enabled ? value : "--", shown);
+    gfx_text((int16_t)(x + 8u), (int16_t)(y + 3u), &font_small, label, label_fg, bg);
+    if (gfx_text_width(font, shown) > (uint16_t)(w - 10u)) {
+        font = &font_small;
+    }
+    gfx_text_center((int16_t)x, (int16_t)(y + (font == &font_medium ? 14u : 17u)), w, font, shown, value_fg, bg);
+}
+
 static uint16_t scope_menu_accent(void) {
     if (ui.scope_channel_menu) {
         return scope_channel_color(ui.active_ch);
@@ -2755,30 +2558,8 @@ static uint16_t scope_menu_accent(void) {
 }
 
 static void draw_scope_param_chip(uint16_t x, uint16_t y, uint16_t w, uint8_t param) {
-    uint8_t active = ui.scope_param == param;
-    uint16_t accent = scope_menu_accent();
-    uint16_t chip_bg = active ? accent : C_PANEL_2;
-    uint16_t fg = active ? C_BG : C_MUTED;
-    const char *value = scope_param_value(param);
-    uint8_t value_scale = lcd_text_width(value, 2) <= w ? 2u : 1u;
-    uint16_t value_y = (uint16_t)(y + (value_scale == 2u ? 13u : 18u));
-
-    lcd_rect(x, y, w, 32, chip_bg);
-    lcd_rect(x, y, w, 2, accent);
-    lcd_text((uint16_t)(x + 6u), (uint16_t)(y + 4u), scope_param_label(param), fg, chip_bg, 1);
-    lcd_text_center(x, value_y, w, value, fg, chip_bg, value_scale);
-    if (active) {
-        uint16_t text_w = lcd_text_width(value, value_scale);
-        uint16_t underline_w = text_w;
-        if (underline_w > w - 12u) {
-            underline_w = (uint16_t)(w - 12u);
-        }
-        lcd_rect((uint16_t)(x + (w - underline_w) / 2u),
-                 (uint16_t)(y + 29u),
-                 underline_w,
-                 2,
-                 fg);
-    }
+    ui_draw_chip(x, y, w, scope_param_label(param), scope_param_value(param),
+                 scope_menu_accent(), ui.scope_param == param, 1);
 }
 
 static void draw_scope_param_row(uint16_t x, uint16_t y) {
@@ -2811,6 +2592,11 @@ static void draw_scope_trigger_param_row(uint16_t x, uint16_t y) {
     }
 }
 
+static const char *scope_measure_pretty_label(uint8_t measure) {
+    static const char *const labels[] = {"Vpp", "Vmax", "Vmin", "Vavg", "Vrms", "Freq"};
+    return labels[measure < 6u ? measure : 0u];
+}
+
 static const char *scope_measure_channel_state_label(uint8_t idx) {
     return scope_measure_enabled_for(idx, scope_measure_param) ? "ON" : "OFF";
 }
@@ -2827,24 +2613,8 @@ static void draw_scope_measure_chip(uint16_t x,
                                     uint16_t accent,
                                     uint8_t active,
                                     uint8_t selected) {
-    uint16_t bg = active ? accent : C_PANEL_2;
-    uint16_t fg = active ? C_BG : C_MUTED;
-    uint8_t value_scale = lcd_text_width(value, 2) <= w ? 2u : 1u;
-    uint16_t value_y = (uint16_t)(y + (value_scale == 2u ? 13u : 18u));
-
-    lcd_rect(x, y, w, 32, bg);
-    lcd_rect(x, y, w, 2, accent);
-    lcd_text((uint16_t)(x + 6u), (uint16_t)(y + 4u), label, fg, bg, 1);
-    lcd_text_center(x, value_y, w, value, fg, bg, value_scale);
-    if (selected) {
-        uint16_t text_w = lcd_text_width(value, value_scale);
-        uint16_t underline_w = text_w > (uint16_t)(w - 12u) ? (uint16_t)(w - 12u) : text_w;
-        lcd_rect((uint16_t)(x + (w - underline_w) / 2u),
-                 (uint16_t)(y + 29u),
-                 underline_w,
-                 2,
-                 active ? fg : accent);
-    }
+    (void)selected;
+    ui_draw_chip(x, y, w, label, value, accent == C_GRID ? D_MUTED : accent, active, 1);
 }
 
 static void draw_scope_measure_param_row(uint16_t x, uint16_t y) {
@@ -2861,7 +2631,7 @@ static void draw_scope_measure_param_row(uint16_t x, uint16_t y) {
                             y,
                             UI_PARAM_CHIP_W,
                             "VALUE",
-                            scope_measure_labels[scope_measure_param],
+                            scope_measure_pretty_label(scope_measure_param),
                             C_SCOPE,
                             ui.scope_measure_menu_sel == SCOPE_MEASURE_MENU_VALUE,
                             ui.scope_measure_menu_sel == SCOPE_MEASURE_MENU_VALUE);
@@ -3502,21 +3272,7 @@ static void draw_scope_move_chip(uint16_t x,
                                  const char *label,
                                  const char *value,
                                  uint8_t active) {
-    uint16_t accent = scope_channel_color(ui.active_ch);
-    uint16_t bg = active ? accent : C_PANEL_2;
-    uint16_t fg = active ? C_BG : C_MUTED;
-    uint8_t value_scale = lcd_text_width(value, 2) <= w ? 2u : 1u;
-    uint16_t value_y = (uint16_t)(y + (value_scale == 2u ? 13u : 18u));
-
-    lcd_rect(x, y, w, 32, bg);
-    lcd_rect(x, y, w, 2, accent);
-    lcd_text((uint16_t)(x + 6u), (uint16_t)(y + 4u), label, fg, bg, 1);
-    lcd_text_center(x, value_y, w, value, fg, bg, value_scale);
-    if (active) {
-        uint16_t text_w = lcd_text_width(value, value_scale);
-        uint16_t underline_w = text_w > (uint16_t)(w - 12u) ? (uint16_t)(w - 12u) : text_w;
-        lcd_rect((uint16_t)(x + (w - underline_w) / 2u), (uint16_t)(y + 29u), underline_w, 2, fg);
-    }
+    ui_draw_chip(x, y, w, label, value, scope_channel_color(ui.active_ch), active, 1);
 }
 
 static void draw_scope_move_param_row(uint16_t x, uint16_t y) {
@@ -3553,12 +3309,12 @@ static void draw_softkeys(void) {
         return;
     }
     if (ui.mode == UI_MODE_GEN) {
-        lcd_rect(0, Y_SOFT, LCD_WIDTH, H_SOFT, C_BG);
+        lcd_rect(0, Y_SOFT, LCD_WIDTH, H_SOFT, D_BG);
         draw_gen_param_row(GEN_PARAM_ROW_X, (uint16_t)(Y_SOFT + 4u));
         return;
     }
     if (ui.mode == UI_MODE_SCOPE) {
-        lcd_rect(0, Y_SOFT, LCD_WIDTH, H_SOFT, C_BG);
+        lcd_rect(0, (uint16_t)(Y_SOFT - 4u), LCD_WIDTH, (uint16_t)(H_SOFT + 4u), D_BG);
         if (ui.scope_move_mode) {
             draw_scope_move_param_row(UI_PARAM_ROW_X, (uint16_t)(Y_SOFT + 4u));
         } else if (ui.scope_cursor_menu) {
@@ -4006,231 +3762,492 @@ static uint8_t dmm_voltage_warning_level(void) {
     return 0;
 }
 
-static uint16_t dmm_measure_color(void) {
-    uint8_t warning = dmm_voltage_warning_level();
-    if (dmm_live_wire_detected()) {
-        return C_WARN;
-    }
-    if (warning >= 2u) {
-        return C_WARN;
-    }
-    if (warning) {
-        return C_CH1;
-    }
-    return C_TEXT;
+// ---------------------------------------------------------------------------
+// Multimeter screen: flat dark theme, rounded cards, anti-aliased type.
+// Layout (320x240): status bar 0-22, reading card 26-162, stats 168-204,
+// group pills 210-236. Continuity and live-wire states use one tall card
+// (26-204) instead of the reading card plus stats.
+// ---------------------------------------------------------------------------
+
+enum {
+    DMM_X = 8,
+    DMM_W = 304,
+    DMM_IN_X = 20,
+    DMM_IN_W = 280,
+    DMM_STATUS_H = 22,
+    DMM_CARD_Y = 26,
+    DMM_CARD_H = 136,
+    DMM_TALL_H = 178,
+    DMM_STATS_Y = 168,
+    DMM_STATS_H = 36,
+    DMM_KEYS_Y = 210,
+    DMM_KEYS_H = 26,
+};
+
+static const char *const dmm_mode_names[] = {
+    "Auto Detect", "DC Voltage", "AC Voltage", "Resistance",
+    "Diode / Continuity", "Capacitance", "Live Wire", "Continuity",
+    "Temperature", "AC Current (High)", "DC Current (High)",
+    "AC Current (Low)", "DC Current (Low)",
+};
+
+// The SI spellings from dmm_unit_si_text(), with the real symbols the
+// anti-aliased fonts carry.
+static const char *dmm_unit_pretty(const char *unit) {
+    if (ui_text_equal(unit, "Ohm")) return "\xCE\xA9";
+    if (ui_text_equal(unit, "kOhm")) return "k\xCE\xA9";
+    if (ui_text_equal(unit, "MOhm")) return "M\xCE\xA9";
+    if (ui_text_equal(unit, "uA")) return "\xC2\xB5" "A";
+    if (ui_text_equal(unit, "uF")) return "\xC2\xB5" "F";
+    if (ui_text_equal(unit, "~C")) return "\xC2\xB0" "C";
+    if (ui_text_equal(unit, "~F")) return "\xC2\xB0" "F";
+    return unit;
 }
 
-static const char *dmm_alert_label(void) {
-    uint8_t warning = dmm_voltage_warning_level();
-    if (dmm_live_wire_detected()) {
-        return "LIVE WIRE";
+static uint8_t dmm_text_is_number(const char *text) {
+    uint8_t digits = 0;
+    for (; *text; ++text) {
+        if (*text >= '0' && *text <= '9') {
+            ++digits;
+        } else if (*text != '.' && *text != '-' && *text != '+') {
+            return 0;
+        }
     }
-    if (warning >= 2u) {
-        return "DANGER V";
-    }
-    if (warning) {
-        return "HIGH V";
-    }
-    if (dmm_current_mode()) {
-        return dmm_high_current_mode() ? "USE HI JACK" : "USE LO JACK";
-    }
-    return 0;
+    return digits != 0;
 }
 
-static uint16_t dmm_alert_color(void) {
-    uint8_t warning = dmm_voltage_warning_level();
-    if (dmm_live_wire_detected()) {
-        return C_WARN;
+static uint8_t dmm_text_decimals(const char *text) {
+    while (*text && *text != '.') {
+        ++text;
     }
-    if (warning >= 2u) {
-        return C_WARN;
+    if (!*text) {
+        return 0;
     }
-    return C_CH1;
+    uint8_t n = 0;
+    while (*++text) {
+        ++n;
+    }
+    return n;
+}
+
+static int32_t dmm_pow10(uint8_t n) {
+    int32_t v = 1;
+    while (n--) {
+        v *= 10;
+    }
+    return v;
+}
+
+// Fixed-point (`stored` decimals) to text with `shown` decimals; `trim` drops
+// trailing zeros for axis labels.
+static void dmm_format_fixed(int32_t value, uint8_t stored, uint8_t shown, uint8_t trim, char out[12]) {
+    uint8_t pos = 0;
+    char digits[12];
+    uint8_t n = 0;
+    uint32_t v;
+
+    if (shown > stored) {
+        shown = stored;
+    }
+    if (value < 0) {
+        out[pos++] = '-';
+        v = (uint32_t)(-value);
+    } else {
+        v = (uint32_t)value;
+    }
+    v /= (uint32_t)dmm_pow10((uint8_t)(stored - shown));
+    do {
+        digits[n++] = (char)('0' + v % 10u);
+        v /= 10u;
+    } while (v || n <= shown);
+    while (n > 0 && pos < 10u) {
+        if (n == shown && shown) {
+            out[pos++] = '.';
+        }
+        out[pos++] = digits[--n];
+    }
+    out[pos] = 0;
+    if (trim && shown) {
+        while (pos > 0 && out[pos - 1u] == '0') {
+            out[--pos] = 0;
+        }
+        if (pos > 0 && out[pos - 1u] == '.') {
+            out[--pos] = 0;
+        }
+    }
+}
+
+// Smallest 1-2-5 step that is >= magnitude, in the same fixed-point units.
+static int32_t dmm_bar_full_scale(int32_t magnitude) {
+    static const uint8_t steps[3] = {1, 2, 5};
+    int32_t base = 1;
+    for (;;) {
+        for (uint8_t i = 0; i < 3u; ++i) {
+            int32_t fs = base * steps[i];
+            if (fs >= magnitude) {
+                return fs;
+            }
+        }
+        if (base > 100000000) {
+            return base * 10;
+        }
+        base *= 10;
+    }
+}
+
+// Draws an icon from font_icons with the top of its box at y.
+static int16_t dmm_icon(int16_t x, int16_t y, const char *icon, uint16_t fg, uint16_t bg) {
+    return gfx_text(x, y, &font_icons, icon, fg, bg);
+}
+
+static void dmm_draw_pill_icon(int16_t right, uint16_t y, const char *icon, const char *label,
+                               uint16_t fill, uint16_t fg, uint16_t under, int16_t *left_out) {
+    uint16_t icon_w = icon ? (uint16_t)(gfx_text_width(&font_icons, icon) + 3u) : 0u;
+    uint16_t w = (uint16_t)(gfx_text_width(&font_small, label) + icon_w + 12u);
+    int16_t x = (int16_t)(right - (int16_t)w);
+    gfx_round_rect((uint16_t)x, y, w, 15, 7, fill, under);
+    if (icon) {
+        // Small icons are 9-12 px square; centre them in the 15 px pill.
+        int16_t size = (int16_t)(icon_w - 3u);
+        dmm_icon((int16_t)(x + 6), (int16_t)(y + (15 - size) / 2), icon, fg, fill);
+    }
+    gfx_text((int16_t)(x + 6 + (int16_t)icon_w), (int16_t)(y + 1), &font_small, label, fg, fill);
+    *left_out = (int16_t)(x - 4);
+}
+
+static void dmm_draw_pill(int16_t right, uint16_t y, const char *label, uint16_t fill, uint16_t fg, uint16_t under, int16_t *left_out) {
+    dmm_draw_pill_icon(right, y, 0, label, fill, fg, under, left_out);
+}
+
+static void ui_draw_status_bar(const char *title, uint16_t dot) {
+    char pct[5];
+    uint8_t pct_value = battery_percent();
+    uint8_t low = battery_low_alert();
+    uint16_t fill_color = low ? battery_alert_color(D_TEXT) : D_TEXT;
+    uint16_t fill_w = battery_display_full() ? 12u : (uint16_t)((uint32_t)pct_value * 12u / 100u);
+    int16_t x;
+
+    lcd_rect(0, 0, LCD_WIDTH, DMM_STATUS_H, D_BG);
+    gfx_round_rect(8, 8, 6, 6, 3, dot, D_BG);
+    gfx_text(19, 5, &font_small, title, D_TEXT, D_BG);
+
+    gfx_round_rect(294, 7, 17, 9, 2, low ? fill_color : D_MUTED, D_BG);
+    gfx_round_rect(295, 8, 15, 7, 1, D_BG, D_MUTED);
+    lcd_rect(311, 10, 2, 3, D_MUTED);
+    if (fill_w) {
+        lcd_rect(296, 9, fill_w + 1u, 5, fill_color);
+    }
+
+    format_percent(pct);
+    x = (int16_t)(290 - (int16_t)gfx_text_width(&font_small, pct));
+    gfx_text(x, 5, &font_small, pct, battery_alert_color(D_MUTED), D_BG);
+    x = (int16_t)(x - 4);
+    if (battery_charge_indicator_visible()) {
+        dmm_icon((int16_t)(x - 11), 6, ICON_CHARGE_SM, D_GREEN, D_BG);
+        x = (int16_t)(x - 15);
+    }
+    if (usb_cdc_is_configured()) {
+        dmm_icon((int16_t)(x - 12), 5, ICON_USB_SM, D_MUTED, D_BG);
+        x = (int16_t)(x - 16);
+    }
+    if (gen_running || gen_output_applied) {
+        int16_t left;
+        dmm_draw_pill(x, 4, "GEN", D_GEN, D_BG, D_BG, &left);
+    }
+}
+
+static void dmm_draw_status_bar(void) {
+    ui_draw_status_bar("Multimeter", D_ACCENT);
 }
 
 static uint8_t dmm_auto_range_display(void) {
     return ui.auto_range || ui.dmm_mode == DMM_MODE_AUTO;
 }
 
-static const char *dmm_mode_status_label(void) {
+static uint16_t dmm_value_color(uint8_t warning) {
+    if (warning >= 2u) {
+        return D_RED_TEXT;
+    }
+    if (warning) {
+        return D_AMBER;
+    }
+    return D_TEXT;
+}
+
+static void dmm_draw_card_header(uint16_t card_color, uint16_t title_color, uint8_t warning) {
+    int16_t right = (int16_t)(DMM_X + DMM_W - 12);
+    int16_t title_end;
+
+    title_end = gfx_text(DMM_IN_X, DMM_CARD_Y + 7, &font_medium, dmm_mode_names[ui.dmm_mode], title_color, card_color);
+
     if (dmm_hold_active) {
-        return "HOLD";
+        dmm_draw_pill_icon(right, DMM_CARD_Y + 8, ICON_PAUSE_SM, "HOLD", D_AMBER, D_BG, card_color, &right);
     }
     if (dmm_rel_active) {
-        return "REL";
+        dmm_draw_pill(right, DMM_CARD_Y + 8, "REL \xCE\x94", D_ACCENT, D_BG, card_color, &right);
     }
-    return dmm_auto_range_display() ? "AUTO MODE" : "MANUAL MODE";
-}
-
-static const char *dmm_mode_status_detail(void) {
-    const char *value;
-    const char *unit;
-
-    if (!dmm_rel_active) {
-        return 0;
+    if (dmm_auto_range_display()) {
+        dmm_draw_pill(right, DMM_CARD_Y + 8, "AUTO", D_ACCENT_TINT, D_ACCENT, card_color, &right);
+    } else {
+        dmm_draw_pill(right, DMM_CARD_Y + 8, "MANUAL", D_TRACK, D_SUB, card_color, &right);
     }
 
-    value = dmm_rel_ref_value;
-    unit = dmm_rel_unit;
-    ui_text_copy(dmm_status_detail, value, sizeof(dmm_status_detail));
-    if (unit[0] && !ui_text_equal(value, "-----") && !ui_text_equal(value, "RANGE")) {
-        ui_text_append(dmm_status_detail, " ", sizeof(dmm_status_detail));
-        ui_text_append(dmm_status_detail, unit, sizeof(dmm_status_detail));
-    }
-    return dmm_status_detail;
-}
-
-static void lcd_text_right_fit(uint16_t left,
-                               uint16_t right,
-                               uint16_t y,
-                               const char *text,
-                               uint16_t fg,
-                               uint16_t bg,
-                               uint8_t preferred_scale,
-                               uint8_t min_scale) {
-    uint16_t width;
-    uint16_t span = right > left ? (uint16_t)(right - left) : 0u;
-    uint8_t scale = preferred_scale;
-
-    while (scale > min_scale && lcd_text_width(text, scale) > span) {
-        --scale;
-    }
-
-    width = lcd_text_width(text, scale);
-    lcd_text(width >= span ? left : (uint16_t)(right - width), y, text, fg, bg, scale);
-}
-
-static void draw_dmm_mode_status(uint16_t x, uint16_t y, uint16_t right, uint16_t bg) {
-    const char *label = dmm_mode_status_label();
-    const char *detail = dmm_mode_status_detail();
-    uint16_t label_w = lcd_text_width(label, 2);
-    uint16_t label_color = dmm_hold_active ? C_WARN : C_TEXT;
-
-    lcd_text(x, y, label, label_color, bg, 2);
-    if (detail && right > (uint16_t)(x + label_w + 10u)) {
-        uint16_t detail_x = (uint16_t)(x + label_w + 10u);
-        uint16_t detail_right = right;
-        uint16_t detail_span = detail_right > detail_x ? (uint16_t)(detail_right - detail_x) : 0u;
-        uint8_t scale = lcd_text_width(detail, 2) <= detail_span ? 2u : 1u;
-        lcd_text_right_fit(detail_x,
-                           detail_right,
-                           (uint16_t)(y + (scale == 2u ? 0u : 4u)),
-                           detail,
-                           C_TEXT,
-                           bg,
-                           scale,
-                           scale);
+    if (warning) {
+        const char *label = warning >= 2u ? "HIGH VOLTAGE" : "CAUTION";
+        uint16_t color = warning >= 2u ? D_RED_TEXT : D_AMBER;
+        int16_t x = (int16_t)(title_end + 8);
+        if (x + 15 + (int16_t)gfx_text_width(&font_small, label) <= right) {
+            dmm_icon(x, DMM_CARD_Y + 8, ICON_ALERT_SM, color, card_color);
+            gfx_text((int16_t)(x + 15), DMM_CARD_Y + 9, &font_small, label, color, card_color);
+        }
+    } else if (dmm_current_mode()) {
+        const char *label = dmm_high_current_mode() ? "USE HI JACK" : "USE LO JACK";
+        int16_t x = (int16_t)(title_end + 8);
+        if (x + 15 + (int16_t)gfx_text_width(&font_small, label) <= right) {
+            dmm_icon(x, DMM_CARD_Y + 8, ICON_PLUG_SM, D_AMBER, card_color);
+            gfx_text((int16_t)(x + 15), DMM_CARD_Y + 9, &font_small, label, D_AMBER, card_color);
+        }
     }
 }
 
-static void draw_dmm_alert_chip(uint16_t x, uint16_t y, uint16_t w, const char *label, uint16_t color) {
-    if (!label) {
+static void dmm_draw_bar(const char *value, const char *unit, uint16_t card_color, uint16_t fill_color) {
+    enum { BAR_Y = DMM_CARD_Y + 113, LABEL_Y = DMM_CARD_Y + 120 };
+    uint8_t decimals = dmm_stat_decimals();
+    int32_t v = 0;
+    char label[20];
+    char num[12];
+
+    gfx_round_rect(DMM_IN_X, BAR_Y, DMM_IN_W, 6, 3, D_TRACK, card_color);
+    if (!dmm_text_is_number(value) || !parse_fixed_decimal(value[0] == '+' ? value + 1 : value, decimals, &v)) {
         return;
     }
 
-    lcd_rect(x, y, w, 20, color);
-    lcd_frame(x, y, w, 20, C_TEXT);
-    lcd_text_center(x, (uint16_t)(y + 6u), w, label, color == C_CH1 ? C_BG : C_TEXT, color, 1);
-}
-
-static void lcd_thick_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
-    lcd_line(x0, y0, x1, y1, color);
-    lcd_line((int16_t)(x0 + 1), y0, (int16_t)(x1 + 1), y1, color);
-    lcd_line((int16_t)(x0 - 1), y0, (int16_t)(x1 - 1), y1, color);
-    lcd_line(x0, (int16_t)(y0 + 1), x1, (int16_t)(y1 + 1), color);
-    lcd_line(x0, (int16_t)(y0 - 1), x1, (int16_t)(y1 - 1), color);
-}
-
-static void draw_high_voltage_symbol(uint16_t cx, uint16_t top, uint16_t size, uint16_t bg) {
-    int16_t half = (int16_t)(size / 2u);
-    int16_t x0 = (int16_t)((int16_t)cx - half);
-    int16_t x1 = (int16_t)((int16_t)cx + half);
-    int16_t y0 = (int16_t)top;
-    int16_t y1 = (int16_t)(top + size);
-    int16_t bolt_top = (int16_t)(top + size / 5u);
-    int16_t bolt_mid = (int16_t)(top + size / 2u);
-    int16_t bolt_bot = (int16_t)(top + size - size / 7u);
-
-    (void)bg;
-    lcd_thick_line((int16_t)cx, y0, x0, y1, C_WARN);
-    lcd_thick_line(x0, y1, x1, y1, C_WARN);
-    lcd_thick_line(x1, y1, (int16_t)cx, y0, C_WARN);
-    lcd_rect((uint16_t)(cx - size / 20u), (uint16_t)(top + size / 4u), (uint16_t)(size / 10u + 1u), (uint16_t)(size / 3u), C_WARN);
-    lcd_rect((uint16_t)(cx - size / 20u), (uint16_t)(top + size - size / 5u), (uint16_t)(size / 10u + 1u), (uint16_t)(size / 10u + 1u), C_WARN);
-    lcd_thick_line((int16_t)(cx + size / 9u - 2), bolt_top, (int16_t)(cx - size / 8u - 2), bolt_mid, C_TEXT);
-    lcd_thick_line((int16_t)(cx - size / 8u - 2), bolt_mid, (int16_t)(cx + size / 10u - 2), (int16_t)(bolt_mid - size / 10u), C_TEXT);
-    lcd_thick_line((int16_t)(cx + size / 10u - 2), (int16_t)(bolt_mid - size / 10u), (int16_t)(cx - size / 8u - 2), bolt_bot, C_TEXT);
-}
-
-static void draw_dmm_panel(void) {
-    enum {
-        VALUE_LEFT = 22,
-        VALUE_RIGHT = 300,
-        VALUE_Y = 100,
-        UNIT_Y = 150,
-    };
-    uint8_t alert = dmm_voltage_warning_level();
-    uint8_t live_detected = dmm_live_wire_detected();
-    uint16_t value_right = live_detected ? 218u : VALUE_RIGHT;
-    uint16_t value_color = dmm_measure_color();
-    uint16_t unit_color = alert ? value_color : C_DMM;
-
-    lcd_rect(10, 55, 300, 105, C_PANEL);
-    lcd_rect(10, 55, 5, 105, C_DMM);
-    lcd_text(22, 58, dmm_mode_names[ui.dmm_mode], C_DMM, C_PANEL, 3);
-    if (dmm_hold_active || dmm_rel_active) {
-        draw_dmm_mode_status(22, 80, 300u, C_PANEL);
+    if (dmm_rel_active && !dmm_hold_active) {
+        int32_t ref = 0;
+        int32_t mag = v < 0 ? -v : v;
+        int32_t fs;
+        uint16_t half = DMM_IN_W / 2u;
+        uint16_t len;
+        if (parse_fixed_decimal(dmm_rel_ref_value, decimals, &ref) && ref) {
+            mag = ref < 0 ? -ref : ref;
+        }
+        fs = dmm_bar_full_scale(mag ? mag : 1);
+        mag = v < 0 ? -v : v;
+        len = (uint16_t)(mag >= fs ? half : (uint32_t)mag * half / (uint32_t)fs);
+        if (len) {
+            gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + half - len) : (uint16_t)(DMM_IN_X + half), BAR_Y, len, 6, len < 6u ? 0u : 3u, fill_color, D_TRACK);
+        }
+        lcd_rect(DMM_IN_X + half - 1u, BAR_Y - 3u, 2, 12, D_TEXT);
+        gfx_text(DMM_IN_X, LABEL_Y, &font_small, "-", D_MUTED, card_color);
+        gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, "+", D_MUTED, card_color);
+        label[0] = 0;
+        ui_text_append(label, "Reference ", sizeof(label));
+        ui_text_append(label, dmm_rel_ref_value, sizeof(label));
+        ui_text_append(label, " ", sizeof(label));
+        ui_text_append(label, unit, sizeof(label));
+        gfx_text_center(DMM_IN_X, LABEL_Y, DMM_IN_W, &font_small, label, D_MUTED, card_color);
+        return;
     }
-    if (!dmm_hold_active && !dmm_rel_active) {
-        draw_dmm_alert_chip(176, 84, 124, dmm_alert_label(), dmm_alert_color());
+
+    {
+        int32_t mag = v < 0 ? -v : v;
+        int32_t fs = dmm_bar_full_scale(mag ? mag : 1);
+        uint16_t len = (uint16_t)(mag >= fs ? DMM_IN_W : (uint32_t)mag * DMM_IN_W / (uint32_t)fs);
+        if (len) {
+            gfx_round_rect(DMM_IN_X, BAR_Y, len, 6, 3, fill_color, D_TRACK);
+        }
+        for (uint8_t i = 1; i < 4u; ++i) {
+            lcd_rect((uint16_t)(DMM_IN_X + DMM_IN_W * i / 4u), BAR_Y + 8u, 1, 3, D_TRACK);
+        }
+        gfx_text(DMM_IN_X, LABEL_Y, &font_small, "0", D_MUTED, card_color);
+        dmm_format_fixed(fs, decimals, decimals, 1, num);
+        label[0] = 0;
+        if (v < 0) {
+            ui_text_append(label, "-", sizeof(label));
+        }
+        ui_text_append(label, num, sizeof(label));
+        ui_text_append(label, " ", sizeof(label));
+        ui_text_append(label, unit, sizeof(label));
+        gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, label, D_MUTED, card_color);
     }
-    lcd_text_right_fit(VALUE_LEFT, value_right, VALUE_Y, dmm_display_value(), value_color, C_PANEL, 6, 4);
-    lcd_text_right_fit(VALUE_LEFT, VALUE_RIGHT, UNIT_Y, dmm_display_unit(), unit_color, C_PANEL, 3, 2);
-    if (live_detected) {
-        draw_high_voltage_symbol(264, 100, 42, C_PANEL);
+}
+
+static void dmm_draw_reading_card(void) {
+    enum { VALUE_Y = DMM_CARD_Y + 27 };
+    uint8_t warning = dmm_voltage_warning_level();
+    uint16_t card = D_CARD;
+    const char *value = dmm_display_value();
+    const char *unit = dmm_unit_pretty(dmm_display_unit());
+    char signed_value[12];
+    uint16_t value_color = dmm_value_color(warning);
+    uint16_t unit_color = warning ? value_color : D_ACCENT;
+    uint16_t bar_color = warning >= 2u ? D_RED : (warning ? D_AMBER : D_ACCENT);
+    int16_t x;
+
+    if (warning) {
+        gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_CARD_H, 14, warning >= 2u ? D_RED : D_AMBER, D_BG);
+        gfx_round_rect(DMM_X + 2u, DMM_CARD_Y + 2u, DMM_W - 4u, DMM_CARD_H - 4u, 12, card, warning >= 2u ? D_RED : D_AMBER);
+    } else {
+        gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_CARD_H, 14, card, D_BG);
+    }
+    dmm_draw_card_header(card, D_SUB, warning);
+
+    // A relative reading is a difference: show its sign either way.
+    if (dmm_rel_active && !dmm_hold_active && dmm_text_is_number(value) && value[0] != '-') {
+        signed_value[0] = '+';
+        signed_value[1] = 0;
+        ui_text_append(signed_value, value, sizeof(signed_value));
+        value = signed_value;
+    }
+    // ...and with the meter's own precision, not the four decimals of the
+    // fixed-point difference.
+    if (dmm_rel_active && !dmm_hold_active && dmm_text_is_number(value)) {
+        uint8_t keep = dmm_text_decimals(dmm_rel_ref_value);
+        uint8_t has = dmm_text_decimals(value);
+        if (value != signed_value) {
+            ui_text_copy(signed_value, value, sizeof(signed_value));
+            value = signed_value;
+        }
+        if (has > keep) {
+            uint8_t len = 0;
+            while (signed_value[len]) {
+                ++len;
+            }
+            len = (uint8_t)(len - (has - keep) - (keep ? 0u : 1u));
+            signed_value[len] = 0;
+        }
+    }
+
+    if (!value[0]) {
+        gfx_text(DMM_IN_X, VALUE_Y, &font_huge, "----", D_TRACK, card);
+    } else if (dmm_text_is_number(value) &&
+               gfx_text_width(&font_huge, value) + 6u + gfx_text_width(&font_large, unit) <= DMM_IN_W) {
+        x = gfx_text(DMM_IN_X, VALUE_Y, &font_huge, value, value_color, card);
+        // Units sit on the reading's baseline.
+        gfx_text((int16_t)(x + 6), (int16_t)(VALUE_Y + font_huge.ascent - font_large.ascent), &font_large, unit, unit_color, card);
+    } else {
+        uint16_t color = dmm_text_is_number(value) ? value_color : D_SUB;
+        x = gfx_text(DMM_IN_X, VALUE_Y + 26, &font_large, value, color, card);
+        if (unit[0]) {
+            gfx_text((int16_t)(x + 6), VALUE_Y + 26, &font_large, unit, unit_color, card);
+        }
+    }
+
+    dmm_draw_bar(value, unit, card, bar_color);
+}
+
+static void dmm_draw_stats(void) {
+    static const char *const labels[3] = {"MIN", "AVG", "MAX"};
+    const char *value = dmm_display_value();
+    uint8_t valid = dmm_stats.valid && dmm_stats.mode == ui.dmm_mode &&
+                    ui_text_equal(dmm_stats.unit, dmm_display_unit()) && dmm_text_is_number(value);
+    uint8_t shown = dmm_text_decimals(value);
+
+    for (uint8_t i = 0; i < 3u; ++i) {
+        uint16_t x = (uint16_t)(DMM_X + i * 103u);
+        char text[12];
+        gfx_round_rect(x, DMM_STATS_Y, 98, DMM_STATS_H, 10, D_CARD, D_BG);
+        gfx_text((int16_t)(x + 9u), DMM_STATS_Y + 4, &font_small, labels[i], D_MUTED, D_CARD);
+        if (valid) {
+            int32_t v = i == 0u ? dmm_stats.min_value : (i == 1u ? dmm_stats.avg_value : dmm_stats.max_value);
+            dmm_format_fixed(v, dmm_stats.decimals, shown, 0, text);
+            gfx_text((int16_t)(x + 9u), DMM_STATS_Y + 16, &font_medium, text, D_TEXT, D_CARD);
+        } else {
+            gfx_text((int16_t)(x + 9u), DMM_STATS_Y + 16, &font_medium, "\xE2\x80\x94", D_MUTED, D_CARD);
+        }
+    }
+}
+
+// One tall status card: continuity, live wire. `icon` 0 = check, 1 = bolt.
+static void dmm_draw_state_card(uint16_t card, uint16_t sub, uint16_t accent, uint16_t line,
+                                uint16_t icon_bg, uint16_t icon_fg, uint8_t icon,
+                                const char *pill_icon, const char *pill, uint16_t pill_bg, uint16_t pill_fg,
+                                const char *headline, uint16_t headline_color,
+                                const char *detail, const char *detail_unit,
+                                const char *footer_left, const char *footer_right) {
+    enum { CX = DMM_X + 44, CY = DMM_CARD_Y + 82 };
+    int16_t right = (int16_t)(DMM_X + DMM_W - 12);
+
+    gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_TALL_H, 14, card, D_BG);
+    gfx_text(DMM_IN_X, DMM_CARD_Y + 7, &font_medium, dmm_mode_names[ui.dmm_mode], sub, card);
+    if (pill) {
+        dmm_draw_pill_icon(right, DMM_CARD_Y + 8, pill_icon, pill, pill_bg, pill_fg, card, &right);
+    }
+
+    gfx_round_rect(CX - 28, CY - 28, 56, 56, 28, icon_bg, card);
+    if (icon == 0u) {
+        dmm_icon(CX - 17, CY - 17, ICON_CHECK_XL, icon_fg, icon_bg);
+    } else {
+        dmm_icon(CX - 16, CY - 16, ICON_ZAP_XL, icon_fg, icon_bg);
+    }
+
+    gfx_text(DMM_X + 88, CY - 28, &font_large, headline, headline_color, card);
+    if (detail && detail[0]) {
+        int16_t x = gfx_text(DMM_X + 89, CY + 6, &font_medium, detail, sub, card);
+        if (detail_unit && detail_unit[0]) {
+            gfx_text((int16_t)(x + 4), CY + 6, &font_medium, detail_unit, accent, card);
+        }
+    }
+
+    lcd_rect(DMM_IN_X, DMM_CARD_Y + DMM_TALL_H - 25u, DMM_IN_W, 1, line);
+    gfx_text(DMM_IN_X, DMM_CARD_Y + DMM_TALL_H - 19, &font_small, footer_left, sub, card);
+    if (footer_right) {
+        gfx_text_right(DMM_IN_X + DMM_IN_W, DMM_CARD_Y + DMM_TALL_H - 19, &font_small, footer_right, sub, card);
     }
 }
 
 static void draw_dmm_immersive_panel(void) {
-    enum {
-        VALUE_LEFT = 16,
-        VALUE_RIGHT = 310,
-        VALUE_Y = 88,
-        UNIT_Y = 148,
-    };
-    uint8_t alert = dmm_voltage_warning_level();
-    uint8_t live_detected = dmm_live_wire_detected();
-    uint16_t value_right = live_detected ? 222u : VALUE_RIGHT;
-    uint16_t value_color = dmm_measure_color();
-    uint16_t unit_color = alert ? value_color : C_DMM;
+    lcd_rect(0, DMM_STATUS_H, LCD_WIDTH, DMM_KEYS_Y - DMM_STATUS_H - 2u, D_BG);
 
-    lcd_rect(0, 24, LCD_WIDTH, 174, C_BG);
-    lcd_text(18, 27, dmm_mode_names[ui.dmm_mode], C_DMM, C_BG, 3);
-    if (dmm_hold_active || dmm_rel_active) {
-        draw_dmm_mode_status(18, 68, 304u, C_BG);
+    if (ui.dmm_mode == DMM_MODE_LIVE) {
+        if (dmm_live_wire_detected()) {
+            dmm_draw_state_card(D_RED_CARD, D_RED_SUB, D_RED, D_RED_LINE, D_RED, D_BG, 1,
+                                ICON_ALERT_SM, "DETECTED", D_RED, D_BG, "Live wire", D_TEXT,
+                                "Mains phase on the red probe", 0,
+                                "Phase check only: confirm with a voltage reading", 0);
+        } else {
+            dmm_draw_state_card(D_CARD, D_SUB, D_ACCENT, D_TRACK, D_TRACK, D_MUTED, 1,
+                                0, "SCANNING", D_ACCENT_TINT, D_ACCENT, "No live wire", D_SUB,
+                                "Touch the red probe to the wire", 0,
+                                "Red lead in the V jack; beeps on a live phase", 0);
+        }
+        return;
     }
-    if (!dmm_hold_active && !dmm_rel_active) {
-        draw_dmm_alert_chip(176, 55, 128, dmm_alert_label(), dmm_alert_color());
+
+    if (ui.dmm_mode == DMM_MODE_DIODE && !dmm_hold_active && !dmm_rel_active && dmm_diode_continuity_active()) {
+        dmm_draw_state_card(D_GREEN_CARD, D_GREEN_SUB, D_GREEN, D_GREEN_TINT, D_GREEN, D_BG, 0,
+                            ICON_BEEP_SM, "BEEP", D_GREEN_TINT, D_GREEN, "Connected", D_TEXT,
+                            dmm_display_value(), dmm_unit_pretty(dmm_display_unit()),
+                            "Beeps below 50 \xCE\xA9", "Open circuit shows OPEN");
+        return;
     }
-    lcd_text_right_fit(VALUE_LEFT, value_right, VALUE_Y, dmm_display_value(), value_color, C_BG, 7, 5);
-    lcd_text_right_fit(VALUE_LEFT, VALUE_RIGHT, UNIT_Y, dmm_display_unit(), unit_color, C_BG, 4, 3);
-    if (live_detected) {
-        draw_high_voltage_symbol(266, 92, 58, C_BG);
+
+    dmm_draw_reading_card();
+    dmm_draw_stats();
+}
+
+static void draw_dmm_softkeys(void) {
+    static const char *const labels[4] = {"V / \xCE\xA9", "Test", "Sense", "Current"};
+
+    lcd_rect(0, DMM_KEYS_Y - 2u, LCD_WIDTH, LCD_HEIGHT - DMM_KEYS_Y + 2u, D_BG);
+    for (uint8_t i = 0; i < 4u; ++i) {
+        uint16_t x = (uint16_t)(9u + i * 77u);
+        uint8_t active = dmm_group_selected(i);
+        uint16_t fill = active ? D_ACCENT : D_CARD;
+        gfx_round_rect(x, DMM_KEYS_Y, 71, DMM_KEYS_H, 13, fill, D_BG);
+        gfx_text_center((int16_t)x, DMM_KEYS_Y + 4, 71, &font_medium, labels[i], active ? D_BG : D_SUB, fill);
     }
 }
 
 static void draw_dmm(void) {
-    lcd_rect(0, Y_BODY, LCD_WIDTH, H_BODY, C_BG);
-    draw_mode_tabs();
-    draw_dmm_panel();
+    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+    dmm_draw_status_bar();
+    draw_dmm_immersive_panel();
+    draw_dmm_softkeys();
 }
 
 static void draw_dmm_immersive(void) {
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_micro_status(8, 6, C_BG);
-    draw_battery_status_overlay(C_BG);
-    draw_dmm_immersive_panel();
-    draw_dmm_softkeys();
+    draw_dmm();
 }
 
 static int16_t scope_sine(uint16_t phase) {
@@ -5557,6 +5574,157 @@ static void scope_measure_value_for(char out[12], uint8_t idx, uint8_t measure) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Oscilloscope chrome in the modern style. The traces themselves are drawn
+// by the existing fast code; only what surrounds them changes here.
+// ---------------------------------------------------------------------------
+
+// "20mV" -> "20 mV", "1us" -> "1 µs", "0.090V" -> "0.090 V".
+static void scope_pretty_value(const char *in, char *out, uint8_t size) {
+    uint8_t o = 0;
+    uint8_t spaced = 0;
+    for (; *in && o + 3u < size; ++in) {
+        char c = *in;
+        uint8_t alpha = (uint8_t)((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
+        uint8_t after_number = (uint8_t)(o && ((out[o - 1u] >= '0' && out[o - 1u] <= '9') || out[o - 1u] == '.'));
+        if (alpha && !spaced && after_number) {
+            out[o++] = ' ';
+            spaced = 1;
+            if (c == 'u' && in[1] >= 'A') {
+                out[o++] = (char)0xC2;
+                out[o++] = (char)0xB5;
+                continue;
+            }
+        }
+        out[o++] = c;
+    }
+    out[o] = 0;
+    // Scope units arrive upper case ("MV", "KHZ"); on a scope M is milli
+    // for volts and seconds, and k/M for hertz.
+    {
+        static const char *const from[] = {"MV", "UV", "KHZ", "MHZ", "HZ", "MS", "US", "NS", "DB"};
+        static const char *const to[] = {"mV", "\xC2\xB5V", "kHz", "MHz", "Hz", "ms", "\xC2\xB5s", "ns", "dB"};
+        char *unit = out;
+        while (*unit && *unit != ' ') {
+            ++unit;
+        }
+        if (*unit == ' ') {
+            ++unit;
+            for (uint8_t i = 0; i < 9u; ++i) {
+                if (ui_text_equal(unit, from[i])) {
+                    ui_text_copy(unit, to[i], (uint8_t)(size - (uint8_t)(unit - out)));
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static uint16_t scope_tint(uint16_t color, uint16_t under) {
+    return gfx_blend(color, under, 4);
+}
+
+// A pill with an optional small label in front of a value, sized to fit.
+static uint16_t scope_pill_width(const char *label, const char *value) {
+    uint16_t w = (uint16_t)(gfx_text_width(&font_medium, value) + 14u);
+    if (label) {
+        w = (uint16_t)(w + gfx_text_width(&font_small, label) + 5u);
+    }
+    return w;
+}
+
+static void scope_draw_pill(int16_t x, uint16_t y, const char *label, const char *value,
+                            uint16_t fill, uint16_t label_fg, uint16_t value_fg, uint16_t under) {
+    uint16_t w = scope_pill_width(label, value);
+    int16_t tx = (int16_t)(x + 7);
+    gfx_round_rect((uint16_t)x, y, w, 17, 8, fill, under);
+    if (label) {
+        tx = gfx_text(tx, (int16_t)(y + 3u), &font_small, label, label_fg, fill);
+        tx = (int16_t)(tx + 5);
+    }
+    gfx_text(tx, (int16_t)(y + 1u), &font_medium, value, value_fg, fill);
+}
+
+static void scope_channel_range_text(uint8_t idx, char out[16]) {
+    char raw[12];
+    const char *value;
+    const char *unit;
+    scope_vdiv_display(idx, &value, &unit);
+    scope_text_copy(raw, value, sizeof(raw));
+    ui_text_append(raw, unit, sizeof(raw));
+    scope_pretty_value(raw, out, 16);
+}
+
+// Bottom bar: [CH1 20 mV]   [50 ns] [RUN]   [CH2 20 mV]
+static void draw_scope_scale_status(uint16_t y, uint16_t bg) {
+    char ch1[16];
+    char ch2[16];
+    char tb[16];
+    const char *run = ui.running ? (scope_slow_roll_active() ? "ROLL" : "RUN") : "HOLD";
+    uint16_t run_color = ui.running ? D_GREEN : D_AMBER;
+    uint16_t tb_w;
+    uint16_t run_w;
+    int16_t x;
+
+    lcd_rect(0, y, LCD_WIDTH, 19, bg);
+    scope_channel_range_text(0, ch1);
+    scope_channel_range_text(1, ch2);
+    scope_pretty_value(scope_timebase_label(), tb, sizeof(tb));
+
+    scope_draw_pill(8, (uint16_t)(y + 1u), "CH1", scope_ch_enabled[0] ? ch1 : "off",
+                    scope_ch_enabled[0] ? scope_tint(C_CH1, bg) : D_CARD,
+                    scope_ch_enabled[0] ? C_CH1 : D_MUTED, scope_ch_enabled[0] ? D_TEXT : D_MUTED, bg);
+    scope_draw_pill((int16_t)(312 - (int16_t)scope_pill_width("CH2", scope_ch_enabled[1] ? ch2 : "off")),
+                    (uint16_t)(y + 1u), "CH2", scope_ch_enabled[1] ? ch2 : "off",
+                    scope_ch_enabled[1] ? scope_tint(C_CH2, bg) : D_CARD,
+                    scope_ch_enabled[1] ? C_CH2 : D_MUTED, scope_ch_enabled[1] ? D_TEXT : D_MUTED, bg);
+
+    tb_w = scope_pill_width(0, tb);
+    run_w = scope_pill_width(0, run);
+    x = (int16_t)((LCD_WIDTH - (tb_w + 6u + run_w)) / 2u);
+    scope_draw_pill(x, (uint16_t)(y + 1u), 0, tb, D_CARD, D_TEXT, D_TEXT, bg);
+    scope_draw_pill((int16_t)(x + (int16_t)tb_w + 6), (uint16_t)(y + 1u), 0, run,
+                    scope_tint(run_color, bg), run_color, run_color, bg);
+}
+
+// Dotted graticule: dots every 4 px on division lines, a finer dotted
+// centre cross with 1/5-division ticks. Collect pass marks the area once.
+static void scope_draw_graticule(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
+    uint16_t cx = (uint16_t)(gx + ((uint32_t)gw * (SCOPE_X_DIVS / 2u)) / SCOPE_X_DIVS);
+    uint16_t cy = (uint16_t)(gy + ((uint32_t)gh * (SCOPE_Y_DIVS / 2u)) / SCOPE_Y_DIVS);
+
+    gfx_round_rect(gx, gy, gw, gh, 10, D_PLOT, D_BG);
+    if (lcd_collecting()) {
+        return;
+    }
+    for (uint8_t div = 1; div < SCOPE_X_DIVS; ++div) {
+        uint16_t x = (uint16_t)(gx + ((uint32_t)gw * div) / SCOPE_X_DIVS);
+        for (uint16_t y = (uint16_t)(gy + 4u); y < (uint16_t)(gy + gh - 3u); y = (uint16_t)(y + 4u)) {
+            lcd_pixel((int16_t)x, (int16_t)y, D_PLOT_DOT);
+        }
+    }
+    for (uint8_t div = 1; div < SCOPE_Y_DIVS; ++div) {
+        uint16_t y = (uint16_t)(gy + ((uint32_t)gh * div) / SCOPE_Y_DIVS);
+        for (uint16_t x = (uint16_t)(gx + 4u); x < (uint16_t)(gx + gw - 3u); x = (uint16_t)(x + 4u)) {
+            lcd_pixel((int16_t)x, (int16_t)y, D_PLOT_DOT);
+        }
+    }
+    for (uint16_t y = (uint16_t)(gy + 3u); y < (uint16_t)(gy + gh - 2u); y = (uint16_t)(y + 2u)) {
+        lcd_pixel((int16_t)cx, (int16_t)y, D_PLOT_AXIS);
+    }
+    for (uint16_t x = (uint16_t)(gx + 3u); x < (uint16_t)(gx + gw - 2u); x = (uint16_t)(x + 2u)) {
+        lcd_pixel((int16_t)x, (int16_t)cy, D_PLOT_AXIS);
+    }
+    for (uint8_t t = 1; t < SCOPE_X_DIVS * 5u; ++t) {
+        uint16_t x = (uint16_t)(gx + ((uint32_t)gw * t) / (SCOPE_X_DIVS * 5u));
+        lcd_rect(x, (uint16_t)(cy - 2u), 1, 5, D_PLOT_AXIS);
+    }
+    for (uint8_t t = 1; t < SCOPE_Y_DIVS * 5u; ++t) {
+        uint16_t y = (uint16_t)(gy + ((uint32_t)gh * t) / (SCOPE_Y_DIVS * 5u));
+        lcd_rect((uint16_t)(cx - 2u), y, 5, 1, D_PLOT_AXIS);
+    }
+}
+
 static void draw_scope_measure_text(uint16_t left,
                                     uint16_t right,
                                     uint16_t y,
@@ -5578,23 +5746,22 @@ static void draw_scope_measure_text(uint16_t left,
     if (measure >= SCOPE_MEASURE_COUNT) {
         measure = SCOPE_MEASURE_VPP;
     }
-    label = scope_measure_labels[measure];
+    label = scope_measure_pretty_label(measure);
     scope_measure_value_for(value, idx, measure);
 
-    label_w = lcd_text_width(label, 1);
-    value_w = lcd_text_width(value, value_scale);
-    total_w = (uint16_t)(label_w + 4u + value_w);
-    if (total_w > width) {
-        value_scale = 1;
-        value_w = lcd_text_width(value, value_scale);
-        total_w = (uint16_t)(label_w + 4u + value_w);
+    {
+        char pretty[16];
+        uint16_t fill = scope_tint(color, D_PLOT);
+        scope_pretty_value(value, pretty, sizeof(pretty));
+        total_w = scope_pill_width(label, pretty);
+        (void)label_w;
+        (void)value_w;
+        (void)value_scale;
+        if (align_right && total_w < width) {
+            x = (uint16_t)(right - total_w);
+        }
+        scope_draw_pill((int16_t)x, y, label, pretty, fill, color, D_TEXT, D_PLOT);
     }
-    if (align_right && total_w < width) {
-        x = (uint16_t)(right - total_w);
-    }
-
-    lcd_text_transparent(x, (uint16_t)(y + (value_scale == 2u ? 4u : 0u)), label, color, 1);
-    lcd_text_transparent((uint16_t)(x + label_w + 4u), y, value, color, value_scale);
 }
 
 static uint8_t scope_measure_enabled_count(uint8_t ch) {
@@ -5652,24 +5819,6 @@ static void draw_scope_measure_readout(uint16_t gx, uint16_t gy, uint16_t gw, ui
 
 static uint16_t scope_channel_color(uint8_t ch) {
     return ch == 2u ? C_CH2 : C_CH1;
-}
-
-static uint16_t scope_channel_header_color(uint8_t ch) {
-    uint8_t idx = ch == 2u ? 1u : 0u;
-
-    if (!scope_ch_enabled[idx]) {
-        return C_GRID;
-    }
-    return ui.active_ch == ch ? C_TEXT : scope_channel_color(ch);
-}
-
-static void draw_scope_channel_headers(uint16_t ch1_x, uint16_t ch2_x, uint16_t y, uint16_t bg) {
-    if (scope_ch_enabled[0]) {
-        lcd_text(ch1_x, y, "CH1", scope_channel_header_color(1), bg, 1);
-    }
-    if (scope_ch_enabled[1]) {
-        lcd_text(ch2_x, y, "CH2", scope_channel_header_color(2), bg, 1);
-    }
 }
 
 static int16_t scope_channel_center(int16_t base, uint8_t ch2) {
@@ -5767,7 +5916,10 @@ static void draw_scope_hpos_line(int16_t x, uint16_t gy, uint16_t bg, uint8_t ou
     } else if (cx > (int16_t)(LCD_WIDTH - 2u)) {
         cx = (int16_t)(LCD_WIDTH - 2u);
     }
-    lcd_rect((uint16_t)cx, gy, 2, 10, C_TEXT);
+    // A small downward pointer at the top of the plot.
+    for (uint8_t r = 0; r < 5u; ++r) {
+        lcd_rect((uint16_t)(cx - 4 + r), (uint16_t)(gy + 1u + r), (uint16_t)(9u - 2u * r), 1, D_TEXT);
+    }
     draw_scope_hpos_label(cx, gy, bg, outside);
 }
 
@@ -5847,13 +5999,23 @@ static void draw_scope_channel_markers(uint16_t gx,
             draw_scope_move_marker(gx, y, color, label, bg);
             continue;
         }
-        lcd_rect(gx, (uint16_t)y, 6, 2, color);
-        lcd_text(gx >= 7u ? (uint16_t)(gx - 7u) : 0u,
-                 y >= 3 ? (uint16_t)(y - 3) : 0u,
-                 label,
-                 ui.active_ch == i + 1u ? C_TEXT : color,
-                 ui.chrome_visible ? C_BG : bg,
-                 1);
+        {
+            // A small rounded tag on the plot's left edge, pointing at the
+            // channel's zero line; the active channel's tag is outlined.
+            int16_t ty = (int16_t)(y - 6);
+            uint8_t active = ui.active_ch == i + 1u;
+            if (ty < (int16_t)(gy + 1u)) {
+                ty = (int16_t)(gy + 1u);
+            }
+            if (active) {
+                gfx_round_rect((uint16_t)(gx + 1u), (uint16_t)ty, 15, 13, 4, D_TEXT, bg);
+                gfx_round_rect((uint16_t)(gx + 2u), (uint16_t)(ty + 1), 13, 11, 3, color, D_TEXT);
+            } else {
+                gfx_round_rect((uint16_t)(gx + 2u), (uint16_t)(ty + 1), 13, 11, 3, color, bg);
+            }
+            gfx_text_center((int16_t)(gx + 2u), (int16_t)(ty + 1), 13, &font_small, label, D_BG, color);
+            lcd_rect((uint16_t)(gx + 15u), (uint16_t)y, 3, 1, color);
+        }
     }
 }
 
@@ -5884,18 +6046,22 @@ static void draw_scope_trigger_line(uint16_t gx, uint16_t gy, uint16_t gw, uint1
         lcd_rect(x, (uint16_t)y, 5, 1, color);
     }
     scope_format_signed_mv(level, mv);
-    lcd_text((uint16_t)(gx + gw - 58u),
-             (uint16_t)(y > (int16_t)(gy + 9u) ? y - 8 : y + 2),
-             level,
-             color,
-             bg,
-             1);
-    lcd_text((uint16_t)(gx + gw - 10u),
-             (uint16_t)(y > (int16_t)(gy + 9u) ? y - 8 : y + 2),
-             edge,
-             color,
-             bg,
-             1);
+    {
+        char pretty[16];
+        const char *icon = ui.scope_trigger_edge ? ICON_EDGE_FALL_SM : ICON_EDGE_RISE_SM;
+        uint16_t fill = scope_tint(color, bg);
+        uint16_t w;
+        int16_t px;
+        int16_t py = (int16_t)(y > (int16_t)(gy + 18u) ? y - 16 : y + 3);
+
+        scope_pretty_value(level, pretty, sizeof(pretty));
+        w = (uint16_t)(gfx_text_width(&font_small, pretty) + 11u + 4u + 12u);
+        px = (int16_t)(gx + gw - 6u - w);
+        gfx_round_rect((uint16_t)px, (uint16_t)py, w, 14, 7, fill, bg);
+        gfx_text((int16_t)(px + 6), (int16_t)(py + 2), &font_icons, icon, color, fill);
+        gfx_text((int16_t)(px + 21), (int16_t)(py + 1), &font_small, pretty, color, fill);
+    }
+    (void)edge;
 }
 
 #if SCOPE_UI_SAFE_STUB
@@ -6246,103 +6412,6 @@ static void draw_scope_trace(uint16_t color,
     }
 }
 
-static void draw_scope_chrome_live(void) {
-    uint16_t gx = 10;
-    uint16_t gy = 55;
-    uint16_t gw = 300;
-    uint16_t gh = 124;
-    uint16_t grid_bg = RGB565(2, 4, 8);
-
-#if SCOPE_UI_SAFE_STUB
-    scope_sanitize_state();
-    int16_t ch1_center = scope_channel_center(91, 0);
-    int16_t ch2_center = scope_channel_center(118, 1);
-    lcd_rect(0, 55, LCD_WIDTH, 140, C_BG);
-    draw_scope_stub_grid(gx, gy, gw, gh, grid_bg);
-    if (ui.scope_display == SCOPE_DISPLAY_XY) {
-        draw_scope_xy(gx, gy, gw, gh, C_SCOPE);
-    } else {
-        if (ui.scope_afterglow) {
-            if (scope_ch_enabled[0]) {
-                draw_scope_stub_trace(gx, gy, gw, gh, ch1_center, scope_stub_amp(0), scope_dim_color(C_CH1), (uint8_t)(ui.scope_phase - 18u));
-            }
-            if (scope_ch_enabled[1]) {
-                draw_scope_stub_trace(gx, gy, gw, gh, ch2_center, scope_stub_amp(1), scope_dim_color(C_CH2), (uint8_t)(ui.scope_phase + 46u));
-            }
-        }
-        if (scope_ch_enabled[0]) {
-            draw_scope_stub_trace(gx, gy, gw, gh, ch1_center, scope_stub_amp(0), C_CH1, (uint8_t)ui.scope_phase);
-        }
-        if (scope_ch_enabled[1]) {
-            draw_scope_stub_trace(gx, gy, gw, gh, ch2_center, scope_stub_amp(1), C_CH2, (uint8_t)(ui.scope_phase + 64u));
-        }
-        draw_scope_channel_markers(gx, gy, gh, ch1_center, ch2_center, grid_bg);
-    }
-    draw_scope_trigger_line(gx, gy, gw, gh, grid_bg);
-    draw_scope_cursors(gx, gy, gw, gh, grid_bg);
-    draw_scope_cursor_readout(gx, gy, gw, gh, grid_bg);
-    draw_scope_hpos_indicator(gx, gy, gw, gh, grid_bg);
-    draw_scope_measurements(gx, gy, gw, gh, grid_bg);
-    draw_scope_channel_headers(18, 262, 61, grid_bg);
-    draw_scope_scale_status(182, C_BG);
-    return;
-#endif
-
-    lcd_rect(0, 55, LCD_WIDTH, 124, C_BG);
-    lcd_rect(gx, gy, gw, gh, grid_bg);
-    lcd_frame(gx, gy, gw, gh, C_GRID);
-    for (uint8_t div = 1; div < SCOPE_X_DIVS; ++div) {
-        uint16_t x = (uint16_t)(gx + ((uint32_t)gw * div) / SCOPE_X_DIVS);
-        lcd_rect(x, (uint16_t)(gy + 1u), 1, (uint16_t)(gh - 2u), C_GRID);
-    }
-    for (uint8_t div = 1; div < SCOPE_Y_DIVS; ++div) {
-        uint16_t y = (uint16_t)(gy + ((uint32_t)gh * div) / SCOPE_Y_DIVS);
-        lcd_rect((uint16_t)(gx + 1u), y, (uint16_t)(gw - 2u), 1, C_GRID);
-    }
-    lcd_rect((uint16_t)(gx + ((uint32_t)gw * 6u) / SCOPE_X_DIVS), (uint16_t)(gy + 1u), 2, (uint16_t)(gh - 2u), RGB565(67, 85, 95));
-    lcd_rect((uint16_t)(gx + 1u), (uint16_t)(gy + ((uint32_t)gh * 4u) / SCOPE_Y_DIVS), (uint16_t)(gw - 2u), 2, RGB565(67, 85, 95));
-
-    if (scope_frame_valid || !scope_hw_enabled()) {
-        if (ui.scope_display == SCOPE_DISPLAY_XY) {
-            draw_scope_xy(gx, gy, gw, gh, C_SCOPE);
-        } else {
-            int16_t plot_x0 = (int16_t)(gx + 1u);
-            uint16_t plot_w = (uint16_t)(gw - 3u);
-            int16_t ch1_center = scope_channel_center(91, 0);
-            int16_t ch2_center = scope_channel_center(111, 1);
-            if (scope_slow_roll_active()) {
-                draw_scope_slow_roll_trace(0, plot_x0, plot_w, ch1_center, 48, gy, gh, C_CH1);
-                draw_scope_slow_roll_trace(1, plot_x0, plot_w, ch2_center, 48, gy, gh, C_CH2);
-            } else {
-                draw_scope_afterglow_trace(0, plot_x0, plot_w, C_CH1);
-                draw_scope_afterglow_trace(1, plot_x0, plot_w, C_CH2);
-                draw_scope_trace(C_CH1, 0, plot_x0, ch1_center, 48, plot_w, gy, gh);
-                draw_scope_trace(C_CH2, 1, plot_x0, ch2_center, 48, plot_w, gy, gh);
-            }
-            draw_scope_channel_markers(gx, gy, gh, ch1_center, ch2_center, grid_bg);
-        }
-        if (scope_fft_src != 4u) {
-            draw_scope_trigger_line(gx, gy, gw, gh, grid_bg);
-        }
-        draw_scope_cursors(gx, gy, gw, gh, grid_bg);
-        draw_scope_cursor_readout(gx, gy, gw, gh, grid_bg);
-        draw_scope_hpos_indicator(gx, gy, gw, gh, grid_bg);
-        draw_scope_measure_readout((uint16_t)(gx + 5u), gy, (uint16_t)(gw - 10u), gh, grid_bg);
-    } else {
-        lcd_text_center(gx, 103, gw, scope_hw_ready() ? "WAIT" : "FPGA", C_MUTED, grid_bg, 2);
-    }
-
-    draw_scope_channel_headers(18, 262, 61, grid_bg);
-
-    lcd_rect(0, 180, LCD_WIDTH, 19, C_BG);
-    draw_scope_scale_status(182, C_BG);
-}
-
-static void draw_scope(void) {
-    lcd_rect(0, Y_BODY, LCD_WIDTH, H_BODY, C_BG);
-    draw_scope_chrome_live();
-}
-
 static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
     if (!scope_math_mode || !scope_frame_valid ||
         !scope_ch_enabled[0] || !scope_ch_enabled[1] || gw < 4u || gh < 4u) {
@@ -6398,15 +6467,14 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
 }
 
 static void draw_scope_immersive(void) {
-    const uint16_t grid_bg = RGB565(4, 8, 11);
+    const uint16_t grid_bg = D_PLOT;
     uint16_t gx = 8;
     uint16_t gy = 28;
     uint16_t gw = 304;
     uint16_t gh = 190;
 
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, grid_bg);
-    draw_micro_status(6, 6, grid_bg);
-    draw_battery_status_overlay(grid_bg);
+    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+    ui_draw_status_bar("Oscilloscope", D_SCOPE);
 
 #if SCOPE_UI_SAFE_STUB
     scope_sanitize_state();
@@ -6437,22 +6505,11 @@ static void draw_scope_immersive(void) {
     draw_scope_cursor_readout(gx, gy, gw, gh, grid_bg);
     draw_scope_hpos_indicator(gx, gy, gw, gh, grid_bg);
     draw_scope_measurements(gx, gy, gw, gh, grid_bg);
-    draw_scope_channel_headers(16, 276, 34, grid_bg);
     draw_scope_scale_status(220, grid_bg);
     return;
 #endif
 
-    lcd_frame(gx, gy, gw, gh, C_GRID);
-    for (uint8_t div = 1; div < SCOPE_X_DIVS; ++div) {
-        uint16_t x = (uint16_t)(gx + ((uint32_t)gw * div) / SCOPE_X_DIVS);
-        lcd_rect(x, (uint16_t)(gy + 1u), 1, (uint16_t)(gh - 2u), C_GRID);
-    }
-    for (uint8_t div = 1; div < SCOPE_Y_DIVS; ++div) {
-        uint16_t y = (uint16_t)(gy + ((uint32_t)gh * div) / SCOPE_Y_DIVS);
-        lcd_rect((uint16_t)(gx + 1u), y, (uint16_t)(gw - 2u), 1, C_GRID);
-    }
-    lcd_rect((uint16_t)(gx + ((uint32_t)gw * 6u) / SCOPE_X_DIVS), (uint16_t)(gy + 1u), 2, (uint16_t)(gh - 2u), RGB565(67, 85, 95));
-    lcd_rect((uint16_t)(gx + 1u), (uint16_t)(gy + ((uint32_t)gh * 4u) / SCOPE_Y_DIVS), (uint16_t)(gw - 2u), 2, RGB565(67, 85, 95));
+    scope_draw_graticule(gx, gy, gw, gh);
 
     if (scope_frame_valid || !scope_hw_enabled() || scope_fft_src == 4u) {
         if (ui.scope_display == SCOPE_DISPLAY_XY) {
@@ -6485,10 +6542,11 @@ static void draw_scope_immersive(void) {
         draw_scope_hpos_indicator(gx, gy, gw, gh, grid_bg);
         draw_scope_measure_readout((uint16_t)(gx + 6u), gy, (uint16_t)(gw - 12u), gh, grid_bg);
     } else {
-        lcd_text_center(gx, (uint16_t)(gy + 82u), gw, scope_hw_ready() ? "WAIT" : "FPGA", C_MUTED, grid_bg, 2);
+        gfx_text_center((int16_t)gx, (int16_t)(gy + 80u), gw, &font_medium,
+                        scope_hw_ready() ? "Waiting for trigger" : "Starting FPGA", D_MUTED, grid_bg);
     }
 
-    draw_scope_scale_status(220, grid_bg);
+    draw_scope_scale_status(220, D_BG);
     ui_draw_math_menu();
 }
 
@@ -6712,53 +6770,75 @@ static int16_t gen_wave_preview_y(uint16_t point, uint16_t width, int16_t center
     return (int16_t)(center + scaled_amp - (int16_t)((uint32_t)sample * (uint16_t)(scaled_amp * 2) / 255u));
 }
 
+static const char *const gen_wave_names[] = {
+    "Sine", "Square", "Sawtooth", "Half wave", "Full wave",
+    "Step up", "Step down", "Exp rise", "Exp fall", "DC",
+    "Multi-audio", "Sinker pulse", "Lorentz", "Triangle", "Noise", "Arbitrary",
+};
+
+// Preview: a rounded plot with a dotted centre line and the waveform drawn
+// anti-aliased in the generator's violet.
 static void draw_gen_wave_preview(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bg) {
-    uint16_t grid_bg = RGB565(2, 4, 8);
     uint16_t center_y = (uint16_t)(y + h / 2u);
     uint16_t plot_x0 = (uint16_t)(x + 8u);
     uint16_t plot_w = (uint16_t)(w - 16u);
+    int16_t amp = (int16_t)(h / 2u - 12u);
     int16_t prev_x = (int16_t)plot_x0;
-    int16_t prev_y = gen_wave_preview_y(0, plot_w, (int16_t)center_y, (int16_t)(h / 2u - 11u));
+    int16_t prev_y = gen_wave_preview_y(0, plot_w, (int16_t)center_y, amp);
 
-    (void)bg;
-    lcd_rect(x, y, w, h, grid_bg);
-    lcd_frame(x, y, w, h, C_GRID);
-    for (uint16_t gx = (uint16_t)(x + w / 4u); gx < (uint16_t)(x + w); gx = (uint16_t)(gx + w / 4u)) {
-        lcd_rect(gx, (uint16_t)(y + 1u), 1, (uint16_t)(h - 2u), C_PANEL_2);
+    gfx_round_rect(x, y, w, h, 10, D_PLOT, bg);
+    if (!lcd_collecting()) {
+        for (uint16_t px = (uint16_t)(x + 6u); px < (uint16_t)(x + w - 6u); px = (uint16_t)(px + 3u)) {
+            lcd_pixel((int16_t)px, (int16_t)center_y, D_PLOT_AXIS);
+        }
+        for (uint8_t q = 1; q < 4u; ++q) {
+            uint16_t gx = (uint16_t)(x + (uint32_t)w * q / 4u);
+            for (uint16_t py = (uint16_t)(y + 5u); py < (uint16_t)(y + h - 5u); py = (uint16_t)(py + 4u)) {
+                lcd_pixel((int16_t)gx, (int16_t)py, D_PLOT_DOT);
+            }
+        }
     }
-    lcd_rect((uint16_t)(x + 1u), center_y, (uint16_t)(w - 2u), 1, RGB565(58, 74, 88));
-
-    for (uint16_t px = 3; px <= plot_w; px = (uint16_t)(px + 3u)) {
+    // One column at a time: a solid span from this point to the next, two
+    // pixels thick, with a soft pixel at each end. Unlike joined line
+    // segments this never paints over itself, so the trace stays even.
+    (void)prev_x;
+    for (uint16_t px = 0; px < plot_w; ++px) {
+        int16_t y0 = px ? prev_y : gen_wave_preview_y(0, plot_w, (int16_t)center_y, amp);
+        int16_t y1 = gen_wave_preview_y((uint16_t)(px + 1u), plot_w, (int16_t)center_y, amp);
+        int16_t lo = y0 < y1 ? y0 : y1;
+        int16_t hi = (int16_t)((y0 > y1 ? y0 : y1) + 1);
         int16_t sx = (int16_t)(plot_x0 + px);
-        int16_t sy = gen_wave_preview_y(px, plot_w, (int16_t)center_y, (int16_t)(h / 2u - 11u));
-        lcd_line(prev_x, prev_y, sx, sy, C_GEN);
-        lcd_line(prev_x, (int16_t)(prev_y + 1), sx, (int16_t)(sy + 1), C_GEN);
-        prev_x = sx;
-        prev_y = sy;
+        lcd_rect((uint16_t)sx, (uint16_t)lo, 1, (uint16_t)(hi - lo + 1), D_GEN);
+        lcd_pixel(sx, (int16_t)(lo - 1), gfx_blend(D_GEN, D_PLOT, 6));
+        lcd_pixel(sx, (int16_t)(hi + 1), gfx_blend(D_GEN, D_PLOT, 6));
+        prev_y = y1;
     }
-
 }
 
+
+// Wave name and preview in one card.
+static void draw_gen_wave_card(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    uint8_t wave = ui.gen_wave < SIGGEN_WAVE_COUNT ? ui.gen_wave : SIGGEN_WAVE_SINE;
+    gfx_round_rect(x, y, w, h, 14, D_CARD, D_BG);
+    gfx_text((int16_t)(x + 12u), (int16_t)(y + 6u), &font_small, "WAVEFORM", D_MUTED, D_CARD);
+    gfx_text((int16_t)(x + 12u), (int16_t)(y + 17u), &font_large, gen_wave_names[wave], D_TEXT, D_CARD);
+    draw_gen_wave_preview((uint16_t)(x + 8u), (uint16_t)(y + 54u), (uint16_t)(w - 16u), (uint16_t)(h - 62u), D_CARD);
+}
+
+// Output state: a tall card with a power icon, green when the output is on.
 static void draw_gen_output_panel(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t bg) {
-    uint16_t panel_bg = ui.running ? RGB565(12, 56, 39) : C_PANEL;
-    uint16_t accent = ui.running ? C_DMM : C_WARN;
+    uint8_t on = ui.running;
+    uint16_t card = on ? D_GREEN_CARD : D_CARD;
+    uint16_t accent = on ? D_GREEN : D_MUTED;
+    uint16_t cx = (uint16_t)(x + w / 2u);
+    uint16_t cy = (uint16_t)(y + h / 2u - 6u);
 
-    (void)bg;
-    lcd_rect(x, y, w, h, panel_bg);
-    lcd_frame(x, y, w, h, accent);
-    lcd_rect(x, y, w, 4, accent);
-    lcd_text_center(x, (uint16_t)(y + h / 2u - 10u), w, ui.running ? "ON" : "OFF", accent, panel_bg, 3);
-}
-
-// Halfway between two colours, channel by channel in RGB565. The number
-// editors use it on their leading zeros: editing digit by digit needs the
-// places to stay put, but "0001Hz" hides the order of magnitude when all
-// four digits shout equally loud.
-static uint16_t color_mix(uint16_t a, uint16_t b) {
-    uint16_t r = (uint16_t)((((a >> 11) & 0x1Fu) + ((b >> 11) & 0x1Fu)) / 2u);
-    uint16_t g = (uint16_t)((((a >> 5) & 0x3Fu) + ((b >> 5) & 0x3Fu)) / 2u);
-    uint16_t blue = (uint16_t)(((a & 0x1Fu) + (b & 0x1Fu)) / 2u);
-    return (uint16_t)((r << 11) | (g << 5) | blue);
+    gfx_round_rect(x, y, w, h, 14, card, bg);
+    gfx_text_center((int16_t)x, (int16_t)(y + 6u), w, &font_small, "OUTPUT", on ? D_GREEN_SUB : D_MUTED, card);
+    gfx_round_rect((uint16_t)(cx - 22u), (uint16_t)(cy - 22u), 44, 44, 22, on ? D_GREEN : D_TRACK, card);
+    gfx_text((int16_t)(cx - 8u), (int16_t)(cy - 8u), &font_icons, ICON_START_MD, on ? D_BG : D_SUB, on ? D_GREEN : D_TRACK);
+    gfx_text_center((int16_t)x, (int16_t)(cy + 28u), w, &font_large, on ? "On" : "Off", on ? D_TEXT : D_SUB, card);
+    (void)accent;
 }
 
 // How many leading digits are zeros that carry nothing. The last place is
@@ -6776,114 +6856,88 @@ static uint8_t editor_dim_digits(const char *digits, uint8_t count) {
     return dim;
 }
 
-// A four-digit number with its unit beside it, as the sweep, modulation
-// and Bode menus all edit. Each of those rows used to carry its own copy
-// of this loop -- six of them, differing only in which variable they read.
-// editing selects the place under edit_index; index 4 is the unit, which
-// those menus cycle in the same way.
-static void draw_digit_field(uint16_t x, uint16_t y, uint32_t value,
-                             uint8_t editing, uint8_t edit_index,
-                             const char *unit, uint16_t fg, uint16_t bg) {
-    char digits[5];
-    uint8_t dim;
-
-    digits[0] = (char)('0' + ((value / 1000u) % 10u));
-    digits[1] = (char)('0' + ((value / 100u) % 10u));
-    digits[2] = (char)('0' + ((value / 10u) % 10u));
-    digits[3] = (char)('0' + (value % 10u));
-    digits[4] = 0;
-    dim = editor_dim_digits(digits, 4);
-    for (uint8_t d = 0; d < 4u; ++d) {
-        uint16_t dx = (uint16_t)(x + d * 6u);
-        char text[2] = {digits[d], 0};
-        if (editing && edit_index == d) {
-            lcd_rect(dx, (uint16_t)(y - 1u), 6, 10, RGB565(255, 255, 255));
-            lcd_text(dx, y, text, RGB565(0, 120, 240), RGB565(255, 255, 255), 1);
+// Digit-by-digit editors: fixed-width digits; the place being edited sits
+// on a solid accent block, leading zeros are dimmed.
+// Digit-by-digit editors: fixed-width digits; the place being edited sits
+// on a solid accent block, leading zeros are dimmed.
+static int16_t draw_editor_digits_dot(int16_t x, uint16_t y, const char *digits, uint8_t count,
+                                      int8_t selected, uint8_t dim, int8_t dot_after,
+                                      uint16_t accent, uint16_t fg, uint16_t bg) {
+    uint16_t adv = gfx_text_width(&font_medium, "0");
+    for (uint8_t i = 0; i < count; ++i) {
+        char text[2] = {digits[i], 0};
+        if ((int8_t)i == selected) {
+            gfx_round_rect((uint16_t)(x - 2), (uint16_t)(y + 1u), (uint16_t)(adv + 3u), 16, 4, accent, bg);
+            gfx_text(x, (int16_t)y, &font_medium, text, D_BG, accent);
         } else {
-            lcd_text(dx, y, text, d < dim ? color_mix(fg, bg) : fg, bg, 1);
+            gfx_text(x, (int16_t)y, &font_medium, text, i < dim ? D_TRACK : fg, bg);
+        }
+        x = (int16_t)(x + (int16_t)adv);
+        if ((int8_t)i == dot_after) {
+            x = gfx_text(x, (int16_t)y, &font_medium, ".", fg, bg);
         }
     }
-    if (unit) {
-        uint16_t ux = (uint16_t)(x + 4u * 6u + 2u);
-        uint8_t selected = (uint8_t)(editing && edit_index == 4u);
-        lcd_text(ux, y, unit, selected ? RGB565(0, 120, 240) : fg,
-                 selected ? RGB565(255, 255, 255) : bg, 1);
-        if (selected) {
-            lcd_rect(ux, (uint16_t)(y + 8u), (uint16_t)(lcd_text_width(unit, 1) - 2u), 2,
-                     RGB565(255, 255, 255));
-        }
-    }
+    return x;
 }
 
-static void draw_gen_editor_digit(uint16_t x, uint16_t y, char digit, uint8_t selected,
-                                  uint8_t dim, uint16_t fg, uint16_t bg) {
-    char text[2] = {digit, 0};
-    uint16_t color = selected ? C_TEXT : (dim ? color_mix(fg, bg) : fg);
+static void ui_draw_editor_digits(int16_t x, uint16_t y, const char *digits, uint8_t count,
+                                  int8_t selected, uint8_t dim, uint16_t accent, uint16_t fg, uint16_t bg) {
+    (void)draw_editor_digits_dot(x, y, digits, count, selected, dim, -1, accent, fg, bg);
+}
 
-    lcd_text(x, y, text, color, bg, 2);
+static int16_t draw_gen_editor_digits(int16_t x, uint16_t y, const char *digits, uint8_t count,
+                                      int8_t selected, uint8_t dim, int8_t dot_after,
+                                      uint16_t fg, uint16_t bg) {
+    return draw_editor_digits_dot(x, y, digits, count, selected, dim, dot_after, D_GEN, fg, bg);
+}
+
+static void draw_gen_editor_unit(int16_t x, uint16_t y, const char *unit, uint8_t selected, uint16_t fg, uint16_t bg) {
     if (selected) {
-        lcd_rect((uint16_t)(x + 1u), (uint16_t)(y + 15u), 10, 2, C_TEXT);
+        uint16_t w = (uint16_t)(gfx_text_width(&font_small, unit) + 4u);
+        gfx_round_rect((uint16_t)(x - 2), (uint16_t)(y + 3u), w, 13, 3, D_GEN, bg);
+        gfx_text(x, (int16_t)(y + 3u), &font_small, unit, D_BG, D_GEN);
+    } else {
+        gfx_text(x, (int16_t)(y + 3u), &font_small, unit, fg, bg);
     }
 }
 
 static void draw_gen_param_chip(uint16_t x, uint16_t y, uint16_t w, uint8_t param, const char *value) {
     uint8_t enabled = gen_param_available(param);
     uint8_t active = enabled && ui.gen_param == param;
-    uint16_t chip_bg = active ? C_GEN : (enabled ? C_PANEL_2 : C_TOP);
-    uint16_t fg = active ? C_BG : (enabled ? C_MUTED : C_GRID);
-    const char *shown_value = enabled ? value : "--";
-    uint8_t unit = gen_freq_unit < GEN_FREQ_UNIT_COUNT ? gen_freq_unit : 0u;
-    char digits[5];
+    uint8_t arbitrary = ui.gen_wave == SIGGEN_WAVE_ARBITRARY;
+    uint16_t bg;
+    uint16_t fg = active ? D_TEXT : D_SUB;
+    uint16_t vy = (uint16_t)(y + 14u);
+    int8_t sel = active ? (int8_t)gen_freq_edit_pos : -1;
 
-    lcd_rect(x, y, w, 32, chip_bg);
-    lcd_rect(x, y, w, 2, C_GEN);
-    lcd_text((uint16_t)(x + 6u), (uint16_t)(y + 4u), gen_param_labels[param], fg, chip_bg, 1);
-    if (param == GEN_PARAM_FREQ && ui.gen_wave != SIGGEN_WAVE_ARBITRARY) {
-        uint16_t value_y = (uint16_t)(y + 15u);
-        uint16_t digit_x = (uint16_t)(x + 4u);
-        format_gen_freq_digits(digits);
-        uint8_t dim = editor_dim_digits(digits, GEN_FREQ_EDIT_DIGITS);
-        for (uint8_t i = 0; i < GEN_FREQ_EDIT_DIGITS; ++i) {
-            uint16_t px = (uint16_t)(digit_x + i * 12u);
-            uint8_t selected = (uint8_t)(active && gen_freq_edit_pos == i);
-            draw_gen_editor_digit(px, value_y, digits[i], selected, (uint8_t)(i < dim), fg, chip_bg);
+    if ((param == GEN_PARAM_FREQ && !arbitrary) ||
+        (param == GEN_PARAM_DUTY && enabled && !arbitrary) ||
+        (param == GEN_PARAM_AMP && enabled)) {
+        char digits[5];
+        int16_t ex;
+        bg = ui_chip_frame(x, y, w, D_GEN, active);
+        gfx_text((int16_t)(x + 8u), (int16_t)(y + 3u), &font_small, gen_param_labels[param], active ? D_GEN : D_MUTED, bg);
+        if (param == GEN_PARAM_FREQ) {
+            static const char *const units[] = {"Hz", "kHz", "MHz"};
+            uint8_t unit = gen_freq_unit < GEN_FREQ_UNIT_COUNT ? gen_freq_unit : 0u;
+            format_gen_freq_digits(digits);
+            ex = draw_gen_editor_digits((int16_t)(x + 7u), vy, digits, GEN_FREQ_EDIT_DIGITS, sel,
+                                        editor_dim_digits(digits, GEN_FREQ_EDIT_DIGITS), -1, fg, bg);
+            draw_gen_editor_unit((int16_t)(ex + 3), vy, units[unit < 3u ? unit : 0u],
+                                 (uint8_t)(active && gen_freq_edit_pos == GEN_FREQ_EDIT_UNIT), fg, bg);
+        } else if (param == GEN_PARAM_DUTY) {
+            format_u16_3(gen_clamped_duty(), digits);
+            ex = draw_gen_editor_digits((int16_t)(x + 12u), vy, digits, GEN_DUTY_EDIT_DIGITS, sel,
+                                        editor_dim_digits(digits, GEN_DUTY_EDIT_DIGITS), -1, fg, bg);
+            gfx_text((int16_t)(ex + 2), (int16_t)vy, &font_medium, "%", fg, bg);
+        } else {
+            format_u8_2(gen_clamped_amp_tenths(), digits);
+            ex = draw_gen_editor_digits((int16_t)(x + 18u), vy, digits, GEN_AMP_EDIT_DIGITS, sel, 0, 0, fg, bg);
+            gfx_text((int16_t)(ex + 2), (int16_t)vy, &font_medium, "V", fg, bg);
         }
-        gen_freq_draw_unit((uint16_t)(x + 54u), (uint16_t)(y + 12u), unit, fg, chip_bg,
-                           (uint8_t)(active && gen_freq_edit_pos == GEN_FREQ_EDIT_UNIT));
-        (void)shown_value;
         return;
     }
-    if (param == GEN_PARAM_DUTY && enabled && ui.gen_wave != SIGGEN_WAVE_ARBITRARY) {
-        char duty_digits[4];
-        uint16_t value_y = (uint16_t)(y + 15u);
-        uint16_t digit_x = (uint16_t)(x + 8u);
-        format_u16_3(gen_clamped_duty(), duty_digits);
-        uint8_t dim = editor_dim_digits(duty_digits, GEN_DUTY_EDIT_DIGITS);
-        for (uint8_t i = 0; i < GEN_DUTY_EDIT_DIGITS; ++i) {
-            uint16_t px = (uint16_t)(digit_x + i * 12u);
-            uint8_t selected = (uint8_t)(active && gen_freq_edit_pos == i);
-            draw_gen_editor_digit(px, value_y, duty_digits[i], selected, (uint8_t)(i < dim), fg, chip_bg);
-        }
-        lcd_text((uint16_t)(x + 50u), (uint16_t)(y + 18u), "%", fg, chip_bg, 1);
-        (void)shown_value;
-        return;
-    }
-    if (param == GEN_PARAM_AMP && enabled) {
-        char amp_digits[3];
-        uint16_t value_y = (uint16_t)(y + 15u);
-        uint16_t digit_x = (uint16_t)(x + 15u);
-        format_u8_2(gen_clamped_amp_tenths(), amp_digits);
-        for (uint8_t i = 0; i < GEN_AMP_EDIT_DIGITS; ++i) {
-            uint16_t px = (uint16_t)(i == 0u ? digit_x : (uint16_t)(digit_x + 24u));
-            uint8_t selected = (uint8_t)(active && gen_freq_edit_pos == i);
-            draw_gen_editor_digit(px, value_y, amp_digits[i], selected, 0, fg, chip_bg);
-        }
-        lcd_text((uint16_t)(digit_x + 14u), (uint16_t)(value_y + 8u), ".", fg, chip_bg, 1);
-        lcd_text((uint16_t)(x + 51u), (uint16_t)(y + 18u), "V", fg, chip_bg, 1);
-        (void)shown_value;
-        return;
-    }
-    lcd_text_center(x, (uint16_t)(y + 13u), w, shown_value, fg, chip_bg, 2);
+    ui_draw_chip(x, y, w, gen_param_labels[param], value, D_GEN, active, enabled);
 }
 
 static void draw_gen_param_row(uint16_t x, uint16_t y) {
@@ -6930,7 +6984,7 @@ static void draw_gen_param_row(uint16_t x, uint16_t y) {
         }
     }
 
-    draw_gen_param_chip(x, y, GEN_PARAM_CHIP_W, GEN_PARAM_WAVE, gen_wave_short_labels[wave]);
+    draw_gen_param_chip(x, y, GEN_PARAM_CHIP_W, GEN_PARAM_WAVE, gen_wave_names[wave]);
     draw_gen_param_chip((uint16_t)(x + GEN_PARAM_CHIP_W + GEN_PARAM_CHIP_GAP),
                         y,
                         GEN_PARAM_CHIP_W,
@@ -6948,236 +7002,116 @@ static void draw_gen_param_row(uint16_t x, uint16_t y) {
                         amp_val);
 }
 
-static void draw_generator(void) {
-    lcd_rect(0, Y_BODY, LCD_WIDTH, H_BODY, C_BG);
-    draw_mode_tabs();
-    lcd_rect(10, 55, 303, 136, C_PANEL);
-    lcd_rect(10, 55, 5, 136, C_GEN);
-    lcd_text(22, 58, gen_wave_labels[ui.gen_wave], C_GEN, C_PANEL, 3);
-    draw_gen_wave_preview(22, 101, 204, 76, C_PANEL);
-    draw_gen_output_panel(GEN_OUTPUT_X, 101, GEN_OUTPUT_W, 76, C_PANEL);
-}
-
 static void ui_draw_gen_sweep_menu(void) {
+    static const char *const sweep_names[] = {"Off", "Linear", "Log"};
+    static const char *const fm_names[] = {"Off", "On"};
+    static const char *const fm_wave_names[] = {"Sine", "Triangle", "Square"};
+    uint8_t sel = gen_sweep_row_selected;
+    uint16_t y;
+    uint16_t fill;
+
     if (!gen_sweep_menu_active) {
         return;
     }
+    y = ui_list_begin("Sweep and modulation", ICON_GENERATOR_SM, D_GEN, gfx_blend(D_GEN, D_CARD, 4), 7);
 
-    const char *gen_sweep_mode_names[] = { "OFF", "LINEAR", "LOG" };
-    const char *gen_fm_mode_names[]    = { "OFF", "ON" };
-    const char *gen_fm_wave_names[]    = { "SINE", "TRIANGLE", "SQUARE" };
-
-    uint16_t box_x = 50;
-    uint16_t box_y = 40;
-    uint16_t box_w = 220;
-    uint16_t box_h = 160;
-
-
-    lcd_rect(box_x, box_y, box_w, box_h, RGB565(30, 30, 45)); 
-    lcd_frame(box_x, box_y, box_w, box_h, RGB565(255, 165, 0)); 
-
-    lcd_text(box_x + 10, box_y + 8, "SWEEP AND MODULATION", RGB565(255, 255, 255), RGB565(30, 30, 45), 1);
-    lcd_rect(box_x + 10, box_y + 20, box_w - 20, 1, RGB565(100, 100, 100)); 
-
-    uint16_t color_fg, color_bg;
-    uint16_t row_y;
-
-    row_y = box_y + 26;
-    color_bg = (gen_sweep_row_selected == 0) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = RGB565(255, 255, 255);
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "SWEEP MODE:", color_fg, color_bg, 1);
-    lcd_text(box_x + 110, row_y + 3, gen_sweep_mode_names[gen_sweep_mode], color_fg, color_bg, 1);
-
-    row_y = box_y + 44;
-    color_bg = (gen_sweep_row_selected == 1) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = (gen_sweep_mode) ? RGB565(255, 255, 255) : RGB565(120, 120, 120); 
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "SWEEP TIME:", color_fg, color_bg, 1);
-    
-    draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3), gen_sweep_ms,
-                     (uint8_t)(ui_edit_digit_active && gen_sweep_row_selected == 1),
-                     ui_edit_digit_index, "ms", color_fg, color_bg);
-
-    row_y = box_y + 62;
-    color_bg = (gen_sweep_row_selected == 2) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = (gen_sweep_mode) ? RGB565(255, 255, 255) : RGB565(120, 120, 120); 
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "START FREQ:", color_fg, color_bg, 1);
-    
-    draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3),
-                     freq_clamp_display(siggen_sweep_start_hz, sweep_start_unit),
-                     (uint8_t)(ui_edit_digit_active && gen_sweep_row_selected == 2),
-                     ui_edit_digit_index, freq_unit_labels[sweep_start_unit < 3u ? sweep_start_unit : 0u],
-                     color_fg, color_bg);
-
-    row_y = box_y + 80;
-    color_bg = (gen_sweep_row_selected == 3) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = (gen_sweep_mode) ? RGB565(255, 255, 255) : RGB565(120, 120, 120); 
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "STOP FREQ:", color_fg, color_bg, 1);
-    
-    draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3),
-                     freq_clamp_display(siggen_sweep_stop_hz, sweep_stop_unit),
-                     (uint8_t)(ui_edit_digit_active && gen_sweep_row_selected == 3),
-                     ui_edit_digit_index, freq_unit_labels[sweep_stop_unit < 3u ? sweep_stop_unit : 0u],
-                     color_fg, color_bg);
-
-    row_y = box_y + 98;
-    color_bg = (gen_sweep_row_selected == 4) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = RGB565(255, 255, 255);
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "FM MODE:", color_fg, color_bg, 1);
-    lcd_text(box_x + 110, row_y + 3, gen_fm_mode_names[gen_fm_mode], color_fg, color_bg, 1);
-
-    row_y = box_y + 116;
-    color_bg = (gen_sweep_row_selected == 5) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = (gen_fm_mode) ? RGB565(255, 255, 255) : RGB565(120, 120, 120); 
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "FM WAVE:", color_fg, color_bg, 1);
-    lcd_text(box_x + 110, row_y + 3, gen_fm_wave_names[gen_fm_source], color_fg, color_bg, 1);
-
-    row_y = box_y + 134;
-    color_bg = (gen_sweep_row_selected == 6) ? RGB565(0, 120, 240) : RGB565(30, 30, 45);
-    color_fg = (gen_fm_mode) ? RGB565(255, 255, 255) : RGB565(120, 120, 120); 
-    lcd_rect(box_x + 8, row_y, box_w - 16, 14, color_bg);
-    lcd_text(box_x + 12, row_y + 3, "FM FREQ:", color_fg, color_bg, 1);
-    
-    draw_digit_field((uint16_t)(box_x + 110), (uint16_t)(row_y + 3),
-                     freq_clamp_display(gen_fm_freq_hz, fm_freq_unit),
-                     (uint8_t)(ui_edit_digit_active && gen_sweep_row_selected == 6),
-                     ui_edit_digit_index, freq_unit_labels[fm_freq_unit < 3u ? fm_freq_unit : 0u],
-                     color_fg, color_bg);
+    ui_list_row(y, "Sweep", sweep_names[gen_sweep_mode < 3u ? gen_sweep_mode : 0u], sel == 0u, 1, D_GEN);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    fill = ui_list_row(y, "Sweep time", 0, sel == 1u, gen_sweep_mode != 0u, D_GEN);
+    ui_list_digits(y, gen_sweep_ms, (uint8_t)(ui_edit_digit_active && sel == 1u), ui_edit_digit_index,
+                   "ms", sel == 1u, gen_sweep_mode != 0u, D_GEN, fill);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    fill = ui_list_row(y, "Start freq", 0, sel == 2u, gen_sweep_mode != 0u, D_GEN);
+    ui_list_digits(y, freq_clamp_display(siggen_sweep_start_hz, sweep_start_unit),
+                   (uint8_t)(ui_edit_digit_active && sel == 2u), ui_edit_digit_index,
+                   freq_unit_labels[sweep_start_unit < 3u ? sweep_start_unit : 0u], sel == 2u, gen_sweep_mode != 0u, D_GEN, fill);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    fill = ui_list_row(y, "Stop freq", 0, sel == 3u, gen_sweep_mode != 0u, D_GEN);
+    ui_list_digits(y, freq_clamp_display(siggen_sweep_stop_hz, sweep_stop_unit),
+                   (uint8_t)(ui_edit_digit_active && sel == 3u), ui_edit_digit_index,
+                   freq_unit_labels[sweep_stop_unit < 3u ? sweep_stop_unit : 0u], sel == 3u, gen_sweep_mode != 0u, D_GEN, fill);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    ui_list_row(y, "FM", fm_names[gen_fm_mode ? 1u : 0u], sel == 4u, 1, D_GEN);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    ui_list_row(y, "FM wave", fm_wave_names[gen_fm_source < 3u ? gen_fm_source : 0u], sel == 5u, gen_fm_mode != 0u, D_GEN);
+    y = (uint16_t)(y + UI_LIST_ROW_H);
+    fill = ui_list_row(y, "FM freq", 0, sel == 6u, gen_fm_mode != 0u, D_GEN);
+    ui_list_digits(y, freq_clamp_display(gen_fm_freq_hz, fm_freq_unit),
+                   (uint8_t)(ui_edit_digit_active && sel == 6u), ui_edit_digit_index,
+                   freq_unit_labels[fm_freq_unit < 3u ? fm_freq_unit : 0u], sel == 6u, gen_fm_mode != 0u, D_GEN, fill);
 }
 
 static void draw_generator_immersive(void) {
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_micro_status(6, 6, C_BG);
-    draw_battery_status_overlay(C_BG);
-    lcd_text(18, 31, gen_wave_labels[ui.gen_wave], C_GEN, C_BG, 3);
-    draw_gen_wave_preview(14, 68, 220, 123, C_BG);
-    draw_gen_output_panel(GEN_OUTPUT_X, 68, GEN_OUTPUT_W, 123, C_BG);
+    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+    ui_draw_status_bar("Signal Generator", D_GEN);
+    draw_gen_wave_card(8, 26, 226, 172);
+    draw_gen_output_panel(240, 26, 72, 172, D_BG);
+    lcd_rect(0, Y_SOFT, LCD_WIDTH, H_SOFT, D_BG);
     draw_gen_param_row(GEN_PARAM_ROW_X, (uint16_t)(Y_SOFT + 4u));
     ui_draw_gen_sweep_menu();
 }
 
-static uint16_t menu_item_color(uint8_t index) {
-    if (index == 1u) {
-        return C_MENU_SCOPE;
-    }
-    if (index == 2u) {
-        return C_MENU_GEN;
-    }
-    if (index == 3u) {
-        return C_MENU_SETTINGS;
-    }
-    return C_DMM;
-}
+// ---------------------------------------------------------------------------
+// Main menu: a 2x2 grid of tool cards in the multimeter screen's style.
+// ---------------------------------------------------------------------------
 
-static void draw_menu_icon(uint8_t index, uint16_t x, uint16_t y, uint16_t color, uint16_t bg) {
-    if (index == 0u) {
-        lcd_frame((uint16_t)(x + 2u), y, 42, 52, color);
-        lcd_rect((uint16_t)(x + 8u), (uint16_t)(y + 6u), 30, 13, bg);
-        lcd_frame((uint16_t)(x + 8u), (uint16_t)(y + 6u), 30, 13, color);
-        lcd_text((uint16_t)(x + 13u), (uint16_t)(y + 24u), "V", color, bg, 1);
-        lcd_text((uint16_t)(x + 25u), (uint16_t)(y + 24u), "OHM", color, bg, 1);
-        for (uint8_t i = 0; i < 4u; ++i) {
-            uint16_t px = (uint16_t)(x + 7u + i * 9u);
-            lcd_frame(px, (uint16_t)(y + 40u), 6, 6, color);
-            lcd_rect((uint16_t)(px + 2u), (uint16_t)(y + 42u), 2, 2, color);
-        }
-    } else if (index == 1u) {
-        lcd_text((uint16_t)(x + 1u), y, "CH1", C_CH1, bg, 1);
-        lcd_text((uint16_t)(x + 25u), y, "CH2", C_CH2, bg, 1);
-        lcd_line((int16_t)(x + 9u), (int16_t)(y + 11u), (int16_t)(x + 9u), (int16_t)(y + 17u), C_CH1);
-        lcd_line((int16_t)(x + 33u), (int16_t)(y + 11u), (int16_t)(x + 33u), (int16_t)(y + 17u), C_CH2);
-        lcd_line((int16_t)(x + 9u), (int16_t)(y + 17u), (int16_t)(x + 13u), (int16_t)(y + 13u), C_CH1);
-        lcd_line((int16_t)(x + 9u), (int16_t)(y + 17u), (int16_t)(x + 5u), (int16_t)(y + 13u), C_CH1);
-        lcd_line((int16_t)(x + 33u), (int16_t)(y + 17u), (int16_t)(x + 37u), (int16_t)(y + 13u), C_CH2);
-        lcd_line((int16_t)(x + 33u), (int16_t)(y + 17u), (int16_t)(x + 29u), (int16_t)(y + 13u), C_CH2);
-        lcd_frame(x, (uint16_t)(y + 18u), 46, 34, color);
-        for (uint16_t gx = (uint16_t)(x + 11u); gx < (uint16_t)(x + 44u); gx = (uint16_t)(gx + 11u)) {
-            lcd_rect(gx, (uint16_t)(y + 19u), 1, 32, C_GRID);
-        }
-        for (uint16_t gy = (uint16_t)(y + 27u); gy < (uint16_t)(y + 50u); gy = (uint16_t)(gy + 8u)) {
-            lcd_rect((uint16_t)(x + 1u), gy, 44, 1, C_GRID);
-        }
-        lcd_line((int16_t)(x + 4u), (int16_t)(y + 42u), (int16_t)(x + 12u), (int16_t)(y + 29u), C_CH1);
-        lcd_line((int16_t)(x + 12u), (int16_t)(y + 29u), (int16_t)(x + 22u), (int16_t)(y + 43u), C_CH1);
-        lcd_line((int16_t)(x + 22u), (int16_t)(y + 43u), (int16_t)(x + 32u), (int16_t)(y + 28u), C_CH1);
-        lcd_line((int16_t)(x + 32u), (int16_t)(y + 28u), (int16_t)(x + 42u), (int16_t)(y + 41u), C_CH1);
-    } else if (index == 2u) {
-        lcd_text((uint16_t)(x + 5u), y, "DDS", C_TEXT, bg, 1);
-        lcd_line((int16_t)(x + 38u), (int16_t)(y + 16u), (int16_t)(x + 38u), (int16_t)(y + 7u), C_TEXT);
-        lcd_line((int16_t)(x + 38u), (int16_t)(y + 7u), (int16_t)(x + 34u), (int16_t)(y + 11u), C_TEXT);
-        lcd_line((int16_t)(x + 38u), (int16_t)(y + 7u), (int16_t)(x + 42u), (int16_t)(y + 11u), C_TEXT);
-        lcd_frame(x, (uint16_t)(y + 18u), 46, 34, color);
-        lcd_line((int16_t)(x + 5u), (int16_t)(y + 43u), (int16_t)(x + 11u), (int16_t)(y + 43u), color);
-        lcd_line((int16_t)(x + 11u), (int16_t)(y + 43u), (int16_t)(x + 11u), (int16_t)(y + 30u), color);
-        lcd_line((int16_t)(x + 11u), (int16_t)(y + 30u), (int16_t)(x + 21u), (int16_t)(y + 30u), color);
-        lcd_line((int16_t)(x + 21u), (int16_t)(y + 30u), (int16_t)(x + 21u), (int16_t)(y + 43u), color);
-        lcd_line((int16_t)(x + 21u), (int16_t)(y + 43u), (int16_t)(x + 33u), (int16_t)(y + 43u), color);
-        lcd_line((int16_t)(x + 33u), (int16_t)(y + 43u), (int16_t)(x + 33u), (int16_t)(y + 30u), color);
-        lcd_line((int16_t)(x + 33u), (int16_t)(y + 30u), (int16_t)(x + 41u), (int16_t)(y + 30u), color);
-    } else {
-        static const int8_t outer[][2] = {
-            {19, 10}, {27, 10}, {28, 16}, {31, 17}, {36, 13}, {41, 18},
-            {37, 23}, {38, 26}, {43, 26}, {43, 30}, {38, 30}, {37, 33},
-            {41, 38}, {36, 43}, {31, 39}, {28, 40}, {27, 46}, {19, 46},
-            {18, 40}, {15, 39}, {10, 43}, {5, 38}, {9, 33}, {8, 30},
-            {3, 30}, {3, 26}, {8, 26}, {9, 23}, {5, 18}, {10, 13},
-            {15, 17}, {18, 16},
-        };
-        static const int8_t inner[][2] = {
-            {23, 20}, {28, 22}, {31, 25}, {32, 28}, {31, 31}, {28, 34},
-            {23, 36}, {18, 34}, {15, 31}, {14, 28}, {15, 25}, {18, 22},
-        };
-        for (uint8_t i = 0; i < (uint8_t)(sizeof(outer) / sizeof(outer[0])); ++i) {
-            uint8_t next = (uint8_t)((i + 1u) % (uint8_t)(sizeof(outer) / sizeof(outer[0])));
-            lcd_line((int16_t)(x + outer[i][0]), (int16_t)(y + outer[i][1]),
-                     (int16_t)(x + outer[next][0]), (int16_t)(y + outer[next][1]),
-                     color);
-        }
-        for (uint8_t i = 0; i < (uint8_t)(sizeof(inner) / sizeof(inner[0])); ++i) {
-            uint8_t next = (uint8_t)((i + 1u) % (uint8_t)(sizeof(inner) / sizeof(inner[0])));
-            lcd_line((int16_t)(x + inner[i][0]), (int16_t)(y + inner[i][1]),
-                     (int16_t)(x + inner[next][0]), (int16_t)(y + inner[next][1]),
-                     color);
-        }
-    }
-}
+typedef struct {
+    const char *icon;
+    const char *title;
+    const char *subtitle;
+    uint16_t accent;
+    uint16_t tint;
+} menu_card_t;
 
-static void draw_mode_menu_item(uint8_t index, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+static const menu_card_t menu_cards[4] = {
+    {ICON_MULTIMETER_MD, "Multimeter", "Volts, ohms, current", RGB565(90, 200, 250), RGB565(31, 58, 73)},
+    {ICON_SCOPE_MD, "Oscilloscope", "2 channels, FFT, math", RGB565(52, 211, 153), RGB565(22, 56, 44)},
+    {ICON_GENERATOR_MD, "Signal Generator", "Waves, sweep, CSV", RGB565(167, 139, 250), RGB565(49, 40, 82)},
+    {ICON_SETTINGS_MD, "Settings", "Display, sound, storage", RGB565(255, 181, 71), RGB565(66, 48, 20)},
+};
+
+static void draw_mode_menu_card(uint8_t index) {
+    enum { W = 148, H = 84, GAP = 8, X0 = 8, Y0 = 30 };
+    const menu_card_t *card = &menu_cards[index];
     uint8_t selected = ui.menu_index == index;
-    uint16_t accent = menu_item_color(index);
-    uint16_t bg = selected ? C_PANEL_2 : C_PANEL;
-    uint16_t fg = selected ? C_TEXT : C_MUTED;
+    uint16_t x = (uint16_t)(X0 + (index % 2u) * (W + GAP));
+    uint16_t y = (uint16_t)(Y0 + (index / 2u) * (H + GAP));
+    uint16_t bg = selected ? RGB565(30, 37, 48) : D_CARD;
 
-    lcd_rect(x, y, w, h, bg);
-    lcd_frame(x, y, w, h, selected ? accent : C_GRID);
-    lcd_rect(x, y, w, 5, accent);
-    draw_menu_icon(index, (uint16_t)(x + (w - 46u) / 2u), (uint16_t)(y + 34u), selected ? accent : C_MUTED, bg);
-    if (index == 2u) {
-        lcd_text_center(x, (uint16_t)(y + h - 36u), w, "SIGNAL", fg, bg, 1);
-        lcd_text_center(x, (uint16_t)(y + h - 24u), w, "GENERATOR", fg, bg, 1);
-    } else {
-        lcd_text_center(x, (uint16_t)(y + h - 30u), w, menu_labels[index], fg, bg, 1);
-    }
     if (selected) {
-        lcd_rect((uint16_t)(x + 8u), (uint16_t)(y + h - 11u), (uint16_t)(w - 16u), 4, accent);
+        gfx_round_rect(x, y, W, H, 14, card->accent, D_BG);
+        gfx_round_rect((uint16_t)(x + 2u), (uint16_t)(y + 2u), W - 4u, H - 4u, 12, bg, card->accent);
+    } else {
+        gfx_round_rect(x, y, W, H, 14, bg, D_BG);
     }
+
+    // Icon tile: tinted when idle, solid accent when selected.
+    gfx_round_rect((uint16_t)(x + 12u), (uint16_t)(y + 11u), 36, 36, 10,
+                   selected ? card->accent : card->tint, bg);
+    gfx_text((int16_t)(x + 17u), (int16_t)(y + 16u), &font_icons, card->icon,
+             selected ? D_BG : card->accent, selected ? card->accent : card->tint);
+
+    if (selected) {
+        int16_t left;
+        dmm_draw_pill_icon((int16_t)(x + W - 10u), (uint16_t)(y + 11u), ICON_PLAYPAUSE_SM, "Open", card->tint, card->accent, bg, &left);
+    }
+
+    gfx_text((int16_t)(x + 12u), (int16_t)(y + 48u), &font_medium, card->title, selected ? D_TEXT : D_SUB, bg);
+    gfx_text((int16_t)(x + 12u), (int16_t)(y + 64u), &font_small, card->subtitle, D_MUTED, bg);
 }
+
+static void ui_draw_key_hints(uint16_t y, const char *move, const char *ok, const char *back);
 
 static void draw_mode_menu(void) {
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_battery_status_overlay(C_BG);
+    enum { HINT_Y = 216 };
 
-    lcd_text(14, 18, "MENU", C_TEXT, C_BG, 3);
+    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+    ui_draw_status_bar("Menu", D_TEXT);
+    for (uint8_t i = 0; i < 4u; ++i) {
+        draw_mode_menu_card(i);
+    }
 
-    draw_mode_menu_item(0, 6, 62, 74, 154);
-    draw_mode_menu_item(1, 86, 62, 74, 154);
-    draw_mode_menu_item(2, 166, 62, 74, 154);
-    draw_mode_menu_item(3, 246, 62, 68, 154);
+    ui_draw_key_hints(HINT_Y, "choose", "open", 0);
 }
 
 static const char *startup_label(void) {
@@ -7246,23 +7180,6 @@ static void settings_refresh_storage(void) {
     ui.storage_total_kb = total_kb;
 }
 
-static void settings_storage_text(char out[20]) {
-    char number[12];
-
-    if (!ui.storage_known || !ui.storage_total_kb) {
-        ui_text_copy(out, "STORAGE --", 20);
-        return;
-    }
-    ui_text_copy(out, "FREE ", 20);
-    // Megabytes with one decimal: the drive is 8 MB, so kilobytes would be
-    // five digits of noise and plain megabytes would read 0 when it counts.
-    scope_format_u32(number, ui.storage_free_kb / 1024u);
-    ui_text_append(out, number, 20);
-    ui_text_append(out, ".", 20);
-    scope_format_u32(number, ((ui.storage_free_kb % 1024u) * 10u) / 1024u);
-    ui_text_append(out, number, 20);
-    ui_text_append(out, " MB", 20);
-}
 
 enum {
     BOOT_EXPORT_UI_NONE,
@@ -7271,112 +7188,318 @@ enum {
     BOOT_EXPORT_UI_RESULT,
 };
 
-static void draw_boot_export_overlay(void) {
-    static const char *const errors[] = {
-        "SAVED AND VERIFIED", "STORAGE BUSY - RETRY", "BOOTLOADER READ PROTECTED",
-        "INVALID BOOTLOADER VECTORS", "STORAGE WRITE ERROR",
-        "NOT ENOUGH FREE SPACE", "BACKUP VERIFY ERROR",
-    };
-    char percent[12];
-    if (ui.overlay != UI_OVERLAY_SETTINGS || ui.boot_export_state == BOOT_EXPORT_UI_NONE) {
-        return;
-    }
-    uint8_t error = ui.boot_export_state == BOOT_EXPORT_UI_RESULT &&
-        ui.boot_export_result != BOOT_EXPORT_OK;
-    uint16_t bg = error ? RGB565(64, 24, 28) : C_TEXT;
-    uint16_t fg = error ? C_TEXT : C_BG;
-    lcd_rect(22, 66, 276, 110, bg);
-    lcd_frame(22, 66, 276, 110, error ? C_WARN : C_PANEL_2);
-    lcd_text_center(22, 80, 276, "BOOTLOADER EXPORT", fg, bg, 2);
-    if (ui.boot_export_state == BOOT_EXPORT_UI_CONFIRM) {
-        lcd_text_center(22, 112, 276, "EJECT USB DRIVE FIRST", fg, bg, 1);
-        lcd_text_center(22, 126, 276, "REPLACES EXISTING BACKUP", fg, bg, 1);
-        lcd_text_center(22, 140, 276, "PLAY: EXPORT   MENU: CANCEL", fg, bg, 1);
-    } else if (ui.boot_export_state == BOOT_EXPORT_UI_SAVING) {
-        scope_format_u32(percent, ui.boot_export_percent);
-        ui_text_append(percent, "%", sizeof(percent));
-        lcd_text_center(22, 114, 276, percent, fg, bg, 2);
-        lcd_text_center(22, 145, 276, "READING AND VERIFYING", fg, bg, 1);
+// ---------------------------------------------------------------------------
+// Key hints and dialogs shared by the menu, settings and pop-ups.
+// ---------------------------------------------------------------------------
+
+static const uint16_t D_SETTINGS = RGB565(255, 181, 71);
+static const uint16_t D_SETTINGS_TINT = RGB565(66, 48, 20);
+static const uint16_t D_RED_TINT = RGB565(74, 24, 32);
+
+// A key cap: a small rounded chip holding an icon or a word.
+static int16_t ui_draw_keycap(int16_t x, int16_t y, const char *icon, const char *word, uint16_t under) {
+    uint16_t inner = icon ? gfx_text_width(&font_icons, icon) : gfx_text_width(&font_small, word);
+    uint16_t w = (uint16_t)(inner + 10u);
+    gfx_round_rect((uint16_t)x, (uint16_t)y, w, 15, 5, D_TRACK, under);
+    if (icon) {
+        gfx_text((int16_t)(x + 5), (int16_t)(y + 2), &font_icons, icon, D_TEXT, D_TRACK);
     } else {
-        uint8_t result = ui.boot_export_result;
-        lcd_text_center(22, 115, 276,
-                        errors[result <= BOOT_EXPORT_VERIFY_ERROR ? result : BOOT_EXPORT_STORAGE_ERROR],
-                        fg, bg, 1);
-        if (!error) {
-            lcd_text_center(22, 143, 276, BOOTLOADER_FILE_NAME, fg, bg, 1);
+        gfx_text((int16_t)(x + 5), (int16_t)(y + 1), &font_small, word, D_TEXT, D_TRACK);
+    }
+    return (int16_t)(x + (int16_t)w);
+}
+
+static uint16_t ui_key_hints_width(const char *move, const char *ok, const char *back) {
+    uint16_t w = (uint16_t)(gfx_text_width(&font_icons, ICON_MOVE_SM) + 10u + 5u + gfx_text_width(&font_small, move) +
+                            14u + gfx_text_width(&font_icons, ICON_PLAYPAUSE_SM) + 10u + 5u +
+                            gfx_text_width(&font_small, ok));
+    if (back) {
+        w = (uint16_t)(w + 14u + gfx_text_width(&font_small, "MENU") + 10u + 5u + gfx_text_width(&font_small, back));
+    }
+    return w;
+}
+
+// [arrows] move   [‖▶] ok   [MENU] back -- centred on the screen.
+static void ui_draw_key_hints(uint16_t y, const char *move, const char *ok, const char *back) {
+    int16_t x = (int16_t)((LCD_WIDTH - ui_key_hints_width(move, ok, back)) / 2u);
+    x = ui_draw_keycap(x, (int16_t)y, ICON_MOVE_SM, 0, D_BG);
+    x = gfx_text((int16_t)(x + 5), (int16_t)(y + 1), &font_small, move, D_MUTED, D_BG);
+    x = ui_draw_keycap((int16_t)(x + 14), (int16_t)y, ICON_PLAYPAUSE_SM, 0, D_BG);
+    x = gfx_text((int16_t)(x + 5), (int16_t)(y + 1), &font_small, ok, D_MUTED, D_BG);
+    if (back) {
+        x = ui_draw_keycap((int16_t)(x + 14), (int16_t)y, 0, "MENU", D_BG);
+        gfx_text((int16_t)(x + 5), (int16_t)(y + 1), &font_small, back, D_MUTED, D_BG);
+    }
+}
+
+enum {
+    MODAL_X = 24,
+    MODAL_Y = 60,
+    MODAL_W = 272,
+    MODAL_H = 120,
+};
+
+// A rounded dialog: icon + title, up to two lines, an optional progress bar
+// and an optional "‖▶ confirm / MENU cancel" row.
+static void ui_draw_modal(const char *icon, uint16_t tone, uint16_t tint,
+                          const char *title, const char *line1, const char *line2,
+                          int16_t progress, const char *confirm, const char *cancel) {
+    enum { X = MODAL_X, Y = MODAL_Y, W = MODAL_W, H = MODAL_H };
+
+    gfx_round_rect(X - 4u, Y - 4u, W + 8u, H + 8u, 20, D_BG, D_BG);
+    gfx_round_rect(X, Y, W, H, 16, tone, D_BG);
+    gfx_round_rect(X + 2u, Y + 2u, W - 4u, H - 4u, 14, D_CARD, tone);
+
+    gfx_round_rect(X + 14u, Y + 14u, 30, 30, 9, tint, D_CARD);
+    gfx_text((int16_t)(X + 14 + (30 - (int16_t)gfx_text_width(&font_icons, icon)) / 2),
+             (int16_t)(Y + 14 + (30 - (int16_t)gfx_text_width(&font_icons, icon)) / 2),
+             &font_icons, icon, tone, tint);
+    gfx_text(X + 54, Y + 20, &font_medium, title, D_TEXT, D_CARD);
+
+    if (line1) {
+        gfx_text(X + 16, Y + 54, &font_small, line1, D_SUB, D_CARD);
+    }
+    if (line2) {
+        gfx_text(X + 16, Y + 69, &font_small, line2, D_MUTED, D_CARD);
+    }
+    if (progress >= 0) {
+        uint16_t len = (uint16_t)((uint32_t)(progress > 100 ? 100 : progress) * (W - 32u) / 100u);
+        gfx_round_rect(X + 16u, Y + 90u, W - 32u, 6, 3, D_TRACK, D_CARD);
+        if (len) {
+            gfx_round_rect(X + 16u, Y + 90u, len, 6, len < 6u ? 0u : 3u, tone, D_TRACK);
+        }
+    }
+    if (confirm) {
+        int16_t x = X + 16;
+        x = ui_draw_keycap(x, Y + 92, ICON_PLAYPAUSE_SM, 0, D_CARD);
+        x = gfx_text((int16_t)(x + 5), Y + 93, &font_small, confirm, D_SUB, D_CARD);
+        if (cancel) {
+            x = ui_draw_keycap((int16_t)(x + 14), Y + 92, 0, "MENU", D_CARD);
+            gfx_text((int16_t)(x + 5), Y + 93, &font_small, cancel, D_SUB, D_CARD);
         }
     }
 }
 
-static void draw_settings_reset_overlay(void) {
-    uint16_t bg = RGB565(64, 24, 28);
+static void draw_fw_update_overlay(uint16_t bg) {
+    fw_update_status_t status;
+    char line[32];
+    char bytes[11];
+    uint8_t error;
 
+    (void)bg;
+    fw_update_status(&status);
+    if (status.state == FW_UPDATE_STATE_IDLE) {
+        return;
+    }
+    error = status.state == FW_UPDATE_STATE_ERROR;
+    scope_format_u32(bytes, status.bytes / 1024u);
+    ui_text_copy(line, bytes, sizeof(line));
+    ui_text_append(line, " KB received", sizeof(line));
+    ui_draw_modal(error ? ICON_ERROR_MD : ICON_EXPORT_MD,
+                  error ? D_RED : D_ACCENT, error ? D_RED_TINT : D_ACCENT_TINT,
+                  "Firmware update", fw_update_status_text(&status), line, -1, 0, 0);
+}
+
+static void draw_screenshot_overlay(uint16_t bg) {
+    const char *line1 = "Saving to USB drive";
+    const char *line2 = 0;
+    const char *icon = ICON_EXPORT_MD;
+    uint16_t tone = D_ACCENT;
+    uint16_t tint = D_ACCENT_TINT;
+
+    (void)bg;
+    if (!ui.screenshot_overlay_ms) {
+        return;
+    }
+    if (ui.screenshot_state == SCREENSHOT_STATE_OK) {
+        line1 = "Saved to USB drive";
+        icon = ICON_OK_MD;
+        tone = D_GREEN;
+        tint = D_GREEN_TINT;
+    } else if (ui.screenshot_state != SCREENSHOT_STATE_SAVING) {
+        icon = ICON_ERROR_MD;
+        tone = D_RED;
+        tint = D_RED_TINT;
+        line1 = "Save error";
+        if (ui.screenshot_reason == SCREENSHOT_SAVE_FULL) {
+            line1 = "Drive full";
+            line2 = "Delete IMG files from the PC";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_SLOT) {
+            line1 = "Too many files";
+            line2 = "Delete IMG files from the PC";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_BUSY) {
+            line1 = "Drive busy";
+            line2 = "The PC is reading it - try again";
+        } else if (ui.screenshot_reason == SCREENSHOT_SAVE_NO_VOLUME) {
+            line1 = "No USB drive";
+        }
+    }
+    ui_draw_modal(icon, tone, tint, "Screenshot", line1, line2, -1, 0, 0);
+}
+
+static void draw_boot_export_overlay(void) {
+    static const char *const errors[] = {
+        "Saved and verified", "Storage busy - try again", "Bootloader is read-protected",
+        "Invalid bootloader vectors", "Storage write error",
+        "Not enough free space", "Backup verify error",
+    };
+    if (ui.overlay != UI_OVERLAY_SETTINGS || ui.boot_export_state == BOOT_EXPORT_UI_NONE) {
+        return;
+    }
+    if (ui.boot_export_state == BOOT_EXPORT_UI_CONFIRM) {
+        ui_draw_modal(ICON_EXPORT_MD, D_SETTINGS, D_SETTINGS_TINT, "Export bootloader",
+                      "Eject the USB drive on the PC first.", "Replaces any existing backup.",
+                      -1, "Export", "Cancel");
+    } else if (ui.boot_export_state == BOOT_EXPORT_UI_SAVING) {
+        char line[40];
+        scope_format_u32(line, ui.boot_export_percent);
+        ui_text_append(line, "% - reading and verifying", sizeof(line));
+        ui_draw_modal(ICON_EXPORT_MD, D_SETTINGS, D_SETTINGS_TINT, "Export bootloader",
+                      line, 0, ui.boot_export_percent, 0, 0);
+    } else {
+        uint8_t result = ui.boot_export_result;
+        uint8_t error = result != BOOT_EXPORT_OK;
+        ui_draw_modal(error ? ICON_ERROR_MD : ICON_OK_MD, error ? D_RED : D_GREEN, error ? D_RED_TINT : D_GREEN_TINT,
+                      "Export bootloader",
+                      errors[result <= BOOT_EXPORT_VERIFY_ERROR ? result : BOOT_EXPORT_STORAGE_ERROR],
+                      error ? 0 : BOOTLOADER_FILE_NAME, -1, 0, 0);
+    }
+}
+
+static void draw_settings_reset_overlay(void) {
     if (ui.overlay != UI_OVERLAY_SETTINGS || !ui.reset_confirm) {
         return;
     }
-    lcd_rect(22, 66, 276, 110, bg);
-    lcd_frame(22, 66, 276, 110, C_WARN);
-    lcd_text_center(22, 80, 276, "FACTORY RESET", C_TEXT, bg, 2);
-    lcd_text_center(22, 112, 276, "ALL SETTINGS AND CALIBRATION", C_TEXT, bg, 1);
-    lcd_text_center(22, 126, 276, "WILL BE LOST - CAPTURES ARE KEPT", C_TEXT, bg, 1);
-    lcd_text_center(22, 146, 276, "PLAY: RESET   MENU: CANCEL", C_TEXT, bg, 1);
+    ui_draw_modal(ICON_RESET_MD, D_RED, D_RED_TINT, "Factory reset",
+                  "All settings and calibration will be lost.", "Screenshots and captures are kept.",
+                  -1, "Reset", "Cancel");
+}
+
+// ---------------------------------------------------------------------------
+// Settings page: 3x2 tiles plus a wide info card, same navigation as before.
+// ---------------------------------------------------------------------------
+
+static const char *const settings_tile_labels[] = {
+    "Beep", "Display", "Start", "Sleep", "Bootloader", "Reset",
+};
+static const char *const settings_tile_icons[] = {
+    ICON_BEEP_MD, ICON_DISPLAY_MD, ICON_START_MD, ICON_SLEEP_MD, ICON_EXPORT_MD, ICON_RESET_MD,
+};
+
+// Sentence case for the upper-case setting values: "MEDIUM" -> "Medium".
+static void settings_display_value(uint8_t row, char out[16]) {
+    char scratch[12];
+    const char *raw;
+
+    if (row == 2u) {
+        static const char *const starts[] = {"Menu", "Multimeter", "Scope", "Generator"};
+        const char *label = startup_label();
+        for (uint8_t i = 0; i < 4u; ++i) {
+            if (ui_text_equal(label, startup_labels[i])) {
+                ui_text_copy(out, starts[i], 16);
+                return;
+            }
+        }
+    }
+    if (row == SETTINGS_BOOT_EXPORT_ROW) {
+        ui_text_copy(out, "Export", 16);
+        return;
+    }
+    if (row == SETTINGS_ROW_RESET) {
+        ui_text_copy(out, "Factory", 16);
+        return;
+    }
+    raw = settings_value_text(row, scratch);
+    ui_text_copy(out, raw, 16);
+    for (uint8_t i = 1; out[i]; ++i) {
+        if (out[i] >= 'A' && out[i] <= 'Z') {
+            out[i] = (char)(out[i] + 32);
+        }
+    }
 }
 
 static void draw_settings_tile(uint8_t row, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-    char value[12];
-    uint8_t selectable = row < SETTINGS_SELECTABLE_COUNT;
-    uint8_t selected = selectable && ui.settings_row == row;
-    uint16_t accent = selectable ? menu_item_color(3) : C_GRID;
-    uint16_t bg = selected ? C_PANEL_2 : C_PANEL;
-    uint16_t label_color = selectable ? (selected ? C_TEXT : C_MUTED) : C_GRID;
-    uint16_t value_color = selectable ? (selected ? accent : C_TEXT) : C_MUTED;
-    const char *value_text = settings_value_text(row, value);
-    uint8_t value_scale = (row == 2u || lcd_text_width(value_text, 2) <= (uint16_t)(w - 10u)) ? 2u : 1u;
-    uint16_t value_y = (uint16_t)(y + (value_scale == 2u ? 28u : 34u));
+    char value[16];
+    uint8_t selected = ui.settings_row == row;
+    uint8_t danger = row == SETTINGS_ROW_RESET;
+    uint16_t accent = danger ? D_RED : D_SETTINGS;
+    uint16_t tint = danger ? D_RED_TINT : D_SETTINGS_TINT;
+    uint16_t bg = selected ? RGB565(30, 37, 48) : D_CARD;
 
-    lcd_rect(x, y, w, h, bg);
-    lcd_frame(x, y, w, h, selected ? accent : C_GRID);
-    lcd_rect(x, y, w, 4, accent);
-    lcd_text((uint16_t)(x + 8u), (uint16_t)(y + 8u), settings_row_labels[row], label_color, bg, 1);
-    if (row == SETTINGS_ROW_INFO) {
-        // The wide tile has room for what the small ones never did: the
-        // firmware version, the hardware revision that says which binary
-        // belongs on this unit, and how much of the drive is left.
-        char storage[20];
-        settings_storage_text(storage);
-        // Laid out left to right rather than centred: a centred revision
-        // would run into a version string one character longer.
-        lcd_text((uint16_t)(x + 8u), (uint16_t)(y + 22u), FIRMWARE_VERSION_TEXT, C_TEXT, bg, 2);
-        lcd_text((uint16_t)(x + 150u), (uint16_t)(y + 22u), hardware_revision_text(),
-                 menu_item_color(3), bg, 2);
-        lcd_text((uint16_t)(x + w - 8u - lcd_text_width(storage, 1)),
-                 (uint16_t)(y + 26u), storage, C_MUTED, bg, 1);
-        return;
-    }
-    lcd_text_center(x, value_y, w, value_text, value_color, bg, value_scale);
     if (selected) {
-        lcd_rect((uint16_t)(x + 10u), (uint16_t)(y + h - 7u), (uint16_t)(w - 20u), 3, accent);
+        gfx_round_rect(x, y, w, h, 12, accent, D_BG);
+        gfx_round_rect((uint16_t)(x + 2u), (uint16_t)(y + 2u), (uint16_t)(w - 4u), (uint16_t)(h - 4u), 10, bg, accent);
+    } else {
+        gfx_round_rect(x, y, w, h, 12, bg, D_BG);
+    }
+    gfx_round_rect((uint16_t)(x + 9u), (uint16_t)(y + 9u), 24, 24, 7, selected ? accent : tint, bg);
+    gfx_text((int16_t)(x + 13u), (int16_t)(y + 13u), &font_icons, settings_tile_icons[row],
+             selected ? D_BG : accent, selected ? accent : tint);
+    gfx_text((int16_t)(x + 39u), (int16_t)(y + 14u), &font_small, settings_tile_labels[row], D_MUTED, bg);
+
+    settings_display_value(row, value);
+    gfx_text((int16_t)(x + 10u), (int16_t)(y + 35u), &font_medium, value, selected ? accent : D_TEXT, bg);
+
+    // Level rows get a step meter beside the value: one bar per level above
+    // the lowest setting for beep (OFF has none), one per setting for
+    // brightness (DIM is already one step of light).
+    if (row == 0u || row == 1u) {
+        uint8_t bars = row == 0u ? (uint8_t)(SETTINGS_LEVEL_COUNT - 1u) : (uint8_t)SETTINGS_LEVEL_COUNT;
+        uint8_t level = row == 0u ? ui_settings.beep_level : (uint8_t)(ui_settings.brightness_level + 1u);
+        for (uint8_t i = 0; i < bars; ++i) {
+            uint16_t bx = (uint16_t)(x + w - 12u - (uint16_t)(bars - 1u - i) * 6u - 4u);
+            uint16_t bh = (uint16_t)(4u + i * 2u);
+            gfx_round_rect(bx, (uint16_t)(y + 48u - bh), 4, bh, 1, i < level ? accent : D_TRACK, bg);
+        }
     }
 }
 
-static void draw_settings_menu(void) {
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_battery_status_overlay(C_BG);
+static void draw_settings_info(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    char storage[20];
+    int16_t right;
+    int16_t tx;
 
-    lcd_text(14, 18, "SETTINGS", C_TEXT, C_BG, 3);
-    // Two lines of three tiles, then INFO across the full width. The tiles
-    // lost eight pixels of height to make room for the third line; the
-    // label, the value and the selection bar all still fit.
+    gfx_round_rect(x, y, w, h, 12, D_CARD, D_BG);
+    gfx_round_rect((uint16_t)(x + 9u), (uint16_t)(y + (h - 24u) / 2u), 24, 24, 7, D_TRACK, D_CARD);
+    gfx_text((int16_t)(x + 13u), (int16_t)(y + (h - 24u) / 2u + 4u), &font_icons, ICON_INFO_MD, D_SUB, D_TRACK);
+    gfx_text((int16_t)(x + 42u), (int16_t)(y + 8u), &font_small, "Firmware", D_MUTED, D_CARD);
+    tx = gfx_text((int16_t)(x + 42u), (int16_t)(y + 21u), &font_medium, FIRMWARE_VERSION_TEXT, D_TEXT, D_CARD);
+    {
+        int16_t left;
+        uint16_t pw = (uint16_t)(gfx_text_width(&font_small, hardware_revision_text()) + 12u);
+        dmm_draw_pill((int16_t)(tx + 8 + (int16_t)pw), (uint16_t)(y + 22u), hardware_revision_text(),
+                      D_SETTINGS_TINT, D_SETTINGS, D_CARD, &left);
+    }
+
+    if (!ui.storage_known || !ui.storage_total_kb) {
+        ui_text_copy(storage, "Storage --", sizeof(storage));
+    } else {
+        char number[12];
+        scope_format_u32(number, ui.storage_free_kb / 1024u);
+        ui_text_copy(storage, number, sizeof(storage));
+        ui_text_append(storage, ".", sizeof(storage));
+        scope_format_u32(number, ((ui.storage_free_kb % 1024u) * 10u) / 1024u);
+        ui_text_append(storage, number, sizeof(storage));
+        ui_text_append(storage, " MB free", sizeof(storage));
+    }
+    right = (int16_t)(x + w - 12u);
+    gfx_text_right(right, (int16_t)(y + 21u), &font_small, storage, D_SUB, D_CARD);
+    gfx_text((int16_t)(right - (int16_t)gfx_text_width(&font_small, storage) - 16), (int16_t)(y + 20u),
+             &font_icons, ICON_STORAGE_SM, D_MUTED, D_CARD);
+    gfx_text_right(right, (int16_t)(y + 8u), &font_small, "USB drive", D_MUTED, D_CARD);
+}
+
+static void draw_settings_menu(void) {
+    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+    ui_draw_status_bar("Settings", D_SETTINGS);
     for (uint8_t row = 0; row < SETTINGS_ROW_INFO; ++row) {
         uint8_t col = (uint8_t)(row % SETTINGS_GRID_COLUMNS);
         uint8_t line = (uint8_t)(row / SETTINGS_GRID_COLUMNS);
-        draw_settings_tile(row,
-                           (uint16_t)(8u + col * 105u),
-                           (uint16_t)(64u + line * 58u),
-                           98,
-                           52);
+        draw_settings_tile(row, (uint16_t)(8u + col * 103u), (uint16_t)(28u + line * 60u), 98, 54);
     }
-    draw_settings_tile(SETTINGS_ROW_INFO, 8, 180, 303, 48);
+    draw_settings_info(8, 148, 304, 50);
+    ui_draw_key_hints(214, "move",
+                      ui.settings_row >= SETTINGS_BOOT_EXPORT_ROW ? "open" : "change", "back");
 }
 
 typedef enum {
@@ -7412,52 +7535,27 @@ static uint8_t full_scene_key(void) {
     return (uint8_t)(((uint8_t)ui.mode << 1) | (ui.chrome_visible ? 1u : 0u));
 }
 
+// Every tool draws its own full-screen view; the old header-and-tabs
+// layout only ever showed behind the menu and has been retired.
+static void ui_draw_mode_screen(void) {
+    if (ui.mode == UI_MODE_SCOPE) {
+        draw_scope_immersive();
+    } else if (ui.mode == UI_MODE_GEN) {
+        draw_generator_immersive();
+    } else {
+        draw_dmm_immersive();
+    }
+}
+
 static void ui_draw_full_scene(void) {
     if (full_scene_clear) {
         lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
     }
-    if (!ui.chrome_visible) {
-        if (ui.mode == UI_MODE_SCOPE) {
-            draw_scope_immersive();
-        } else if (ui.mode == UI_MODE_GEN) {
-            draw_generator_immersive();
-        } else {
-            draw_dmm_immersive();
-        }
-        return;
-    }
-
-    draw_header();
-    if (ui.mode == UI_MODE_SCOPE) {
-        draw_scope();
-    } else if (ui.mode == UI_MODE_GEN) {
-        draw_generator();
-    } else {
-        draw_dmm();
-    }
-    draw_softkeys();
+    ui_draw_mode_screen();
 }
 
 static void ui_draw_mode_content_scene(void) {
-    if (!ui.chrome_visible) {
-        if (ui.mode == UI_MODE_SCOPE) {
-            draw_scope_immersive();
-        } else if (ui.mode == UI_MODE_GEN) {
-            draw_generator_immersive();
-        } else {
-            draw_dmm_immersive();
-        }
-        return;
-    }
-
-    if (ui.mode == UI_MODE_SCOPE) {
-        draw_scope();
-    } else if (ui.mode == UI_MODE_GEN) {
-        draw_generator();
-    } else {
-        draw_dmm();
-    }
-    draw_softkeys();
+    ui_draw_mode_screen();
 }
 
 static void ui_draw_local_change_scene(void) {
@@ -7466,13 +7564,8 @@ static void ui_draw_local_change_scene(void) {
         return;
     }
 
-    if (ui.chrome_visible) {
-        draw_dmm_panel();
-        draw_softkeys();
-    } else {
-        draw_dmm_immersive_panel();
-        draw_dmm_softkeys();
-    }
+    draw_dmm_immersive_panel();
+    draw_dmm_softkeys();
 }
 
 static void ui_draw_dmm_reading_scene(void) {
@@ -7481,18 +7574,20 @@ static void ui_draw_dmm_reading_scene(void) {
         return;
     }
 
-    if (ui.chrome_visible) {
-        draw_dmm_panel();
-    } else {
-        draw_dmm_immersive_panel();
-    }
+    draw_dmm_immersive_panel();
 }
 
 static void ui_draw_battery_status_scene(void) {
-    if (ui.chrome_visible) {
+    if (ui.overlay == UI_OVERLAY_MODE_MENU) {
+        ui_draw_status_bar("Menu", D_TEXT);
+    } else if (ui.overlay == UI_OVERLAY_SETTINGS) {
+        ui_draw_status_bar("Settings", D_SETTINGS);
+    } else if (ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE) {
+        dmm_draw_status_bar();
+    } else if (ui.chrome_visible) {
         draw_battery_status_header();
     } else if (ui.mode == UI_MODE_SCOPE) {
-        draw_battery_status_overlay(RGB565(4, 8, 11));
+        ui_draw_status_bar("Oscilloscope", D_SCOPE);
     } else {
         draw_battery_status_overlay(C_BG);
     }
@@ -7501,8 +7596,6 @@ static void ui_draw_battery_status_scene(void) {
 static void ui_draw_scope_frame_scene(void) {
     if (ui.mode != UI_MODE_SCOPE) {
         ui_draw_mode_content_scene();
-    } else if (ui.chrome_visible) {
-        draw_scope_chrome_live();
     } else {
         draw_scope_immersive();
     }
@@ -7521,16 +7614,8 @@ static void ui_draw_gen_preview_params_scene(void) {
         ui_draw_local_change_scene();
         return;
     }
-    if (ui.chrome_visible) {
-        lcd_rect(10, 55, 220, 136, C_PANEL);
-        lcd_rect(10, 55, 5, 136, C_GEN);
-        lcd_text(22, 58, gen_wave_labels[ui.gen_wave], C_GEN, C_PANEL, 3);
-        draw_gen_wave_preview(22, 101, 204, 76, C_PANEL);
-    } else {
-        lcd_rect(14, 31, 220, 160, C_BG);
-        lcd_text(18, 31, gen_wave_labels[ui.gen_wave], C_GEN, C_BG, 3);
-        draw_gen_wave_preview(14, 68, 220, 123, C_BG);
-    }
+    draw_gen_wave_card(8, 26, 226, 172);
+    draw_gen_output_panel(240, 26, 72, 172, D_BG);
     draw_gen_param_row(GEN_PARAM_ROW_X, (uint16_t)(Y_SOFT + 4u));
 }
 
@@ -9935,6 +10020,12 @@ static void ui_handle_menu_keys(uint32_t events) {
             ui_render();
             return;
         }
+        if (events & (KEY_UP | KEY_DOWN)) {
+            // Two rows of two: up and down swap rows in the same column.
+            ui.menu_index = (uint8_t)((ui.menu_index & 3u) ^ 2u);
+            ui_render();
+            return;
+        }
         return;
     }
 
@@ -10951,6 +11042,7 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
 
 void ui_tick(uint32_t elapsed_ms) {
     uint8_t rendered = 0;
+
 
     if (keys_injected) {
         uint32_t events = keys_injected;

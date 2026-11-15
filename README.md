@@ -10,11 +10,13 @@ This firmware is still under active development. Use it at your own risk.
 
 | | | |
 |---|---|---|
-| <img src="https://github.com/user-attachments/assets/17989306-4eee-4da2-8fed-e7fec0660791" width="320"/> | <img src="https://github.com/user-attachments/assets/371b7de3-4b3e-49d5-ad8f-349b1c0e128d" width="320"/> | <img src="https://github.com/user-attachments/assets/eeacebf9-699b-4f2b-977f-c0a2f7650e51" width="320"/> |
-| <img src="https://github.com/user-attachments/assets/47e9052f-8960-4eac-9fb4-16ef131bd813" width="320"/> | <img src="https://github.com/user-attachments/assets/3981d5a3-6cb1-40ab-9c0e-28fe0b2cc03d" width="320"/> | <img src="https://github.com/user-attachments/assets/66c54716-2391-4c1f-9770-989d7f27e5eb" width="320"/> |
-| <img src="https://github.com/user-attachments/files/29745784/img_01.bmp" width="320"/> | <img src="https://github.com/user-attachments/files/29745786/img_02.bmp" width="320"/> | <img src="https://github.com/user-attachments/files/29925826/img_05.bmp" width="320"/> |
-| <img src="https://github.com/user-attachments/files/29925825/img_04.bmp" width="320"/> | | |
+| <img src="docs/screenshots/menu-1.png" width="320" alt="Main menu"/> | <img src="docs/screenshots/01-dc-voltage.png" width="320" alt="Multimeter: DC voltage"/> | <img src="docs/screenshots/02-resistance-rel.png" width="320" alt="Multimeter: resistance with REL"/> |
+| <img src="docs/screenshots/03-continuity.png" width="320" alt="Multimeter: continuity"/> | <img src="docs/screenshots/04-ac-voltage-hold-high.png" width="320" alt="Multimeter: AC voltage, HOLD and high-voltage warning"/> | <img src="docs/screenshots/05-live-wire.png" width="320" alt="Multimeter: live wire detected"/> |
+| <img src="docs/screenshots/scope-1.png" width="320" alt="Oscilloscope"/> | <img src="docs/screenshots/scope-row-trigger.png" width="320" alt="Oscilloscope: trigger settings"/> | <img src="docs/screenshots/scope-math-menu.png" width="320" alt="Oscilloscope: Analytical / Math menu"/> |
+| <img src="docs/screenshots/scope-bode.png" width="320" alt="Oscilloscope: Bode plot"/> | <img src="docs/screenshots/gen-1.png" width="320" alt="Signal generator"/> | <img src="docs/screenshots/gen-sweep-menu.png" width="320" alt="Signal generator: sweep and modulation"/> |
+| <img src="docs/screenshots/settings-1.png" width="320" alt="Settings"/> | <img src="docs/screenshots/settings-reset-confirm.png" width="320" alt="Settings: factory reset dialog"/> | <img src="docs/screenshots/07-dc-current-low.png" width="320" alt="Multimeter: low current"/> |
 
+These images are rendered on a PC by the firmware's own drawing code (`make screenshots`), so they match the 320×240 screen pixel for pixel, shown at 2× without smoothing. Signals and readings in them are synthetic test inputs. All screens are in [`docs/screenshots`](docs/screenshots).
 
 ## What This Adds
 
@@ -26,15 +28,41 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **FFT spectrum view** with selectable window functions plus normal, averaging, and max-hold displays.
 - **Signal-generator sweep and FM menu** opened by long-pressing `CH1`, with linear/logarithmic sweeps and sine, triangle, or square frequency modulation.
 - **Arbitrary waveform playback from CSV files** stored on the device's USB drive. See the ready-to-use [sine](examples/sine.csv) and [action-potential](https://github.com/user-attachments/files/29925821/HH.csv) examples.
-- **Redesigned UI and control flow** for multimeter, oscilloscope, signal generator, menu, and settings screens.
+- **Modern interface** for every screen: a flat dark theme with rounded cards, anti-aliased Inter type, Lucide-style icons, proper unit symbols (Ω, µ, °C) and one colour per tool. See [Interface](#interface).
+- **Multimeter screen** with a large reading, a bar graph (centred on zero in REL mode), a MIN / AVG / MAX row, and dedicated continuity and live-wire cards.
 - **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display, and clearer scale/readout handling.
 - **Runtime USB mass storage** while the device is running.
 - **USB serial telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
 - **In-app firmware update** by copying a matching `F2C23T*.bin` file to the exposed USB storage.
-- **Screenshot capture** to the device storage, with the USB `SHOT` command and remote button presses via `KEY:<NAME>`.
+- **Screenshot capture** to the device storage by long-pressing `SAVE` (saved as `IMG_NN.BMP`), with the USB `SHOT` command and remote button presses via `KEY:<NAME>`.
 - **Read-only bootloader export** from Settings, with hardware-specific backups and CRC32 metadata.
 - **Configurable settings** for brightness, beep volume, sleep behavior, and startup screen, plus hardware target, free storage, and a confirmed factory reset.
 - **Separate release binaries** for old and newer hardware revisions.
+
+## Interface
+
+Every tool uses one visual language: a status bar (tool name, USB, charging and battery), rounded cards, and rows of rounded chips for the settings you change with the arrow keys. The selected chip or row is outlined in the tool's colour: blue for the multimeter, green for the oscilloscope, violet for the signal generator, and amber for settings.
+
+- **Main menu (`MENU`):** a 2×2 grid. Use the arrow keys (left/right and up/down) to choose and `‖▶` to open.
+- **Multimeter:** the four group keys (V/Ω, Test, Sense, Current) are shown as pills at the bottom. HOLD, REL and AUTO/MANUAL appear as tags on the reading card. Readings above 30 V AC or 60 V DC get a red outline and a HIGH VOLTAGE label.
+- **Continuity:** in the Diode / Continuity mode, readings below 50 Ω switch to a green "Connected" card.
+- **Live wire:** put the red lead in the V jack and touch the probe tip to the wire. It is a single-probe phase check, so confirm with a voltage measurement.
+- **Oscilloscope:** a dotted graticule, numbered channel tags, a trigger-level tag with an edge icon, measurement pills, and a bottom bar with CH1/CH2 V/div, the timebase and RUN/HOLD/ROLL. The Analytical / Math, FFT and Bode views use the same style.
+- **Signal generator:** a waveform card with a live preview, an Output card (green when on), and digit-by-digit editors for frequency, duty cycle and amplitude.
+- **Settings:** tiles with icons and level meters, an info card (firmware version, hardware revision, free USB space), and rounded confirmation dialogs.
+
+### Fonts, icons and screenshots
+
+- **Type:** Inter (SIL Open Font License 1.1, [`tools/fonts/Inter-LICENSE.txt`](tools/fonts/Inter-LICENSE.txt)), pre-rendered as 4-bit anti-aliased glyphs in `src/ui_fonts.c` (about 24 KB of flash).
+- **Icons:** Lucide (ISC licence, [`tools/icons/LUCIDE-LICENSE.txt`](tools/icons/LUCIDE-LICENSE.txt)), plus a few icons drawn in the same style (multimeter, oscilloscope, generator, the `‖▶` key and the trigger edges). They are stored as one more font, so the text renderer draws them.
+- **Regenerating the fonts and icons:**
+
+  ```sh
+  node tools/render_icons.js /path/to/lucide-static/icons tools/icons
+  python3 tools/gen_fonts.py /path/to/Inter/extras/ttf tools/icons src/ui_icons.h > src/ui_fonts.c
+  ```
+
+- **Rendering every screen on a PC:** `make preview` writes the exact framebuffers to `build/preview/`, and `make screenshots` refreshes `docs/screenshots/` (needs Python with Pillow).
 
 ## FFT Spectrum
 
@@ -91,6 +119,12 @@ Output files:
 
 - `dist/F2C23T-v2026.11.5-08008000.bin`
 - `dist/F2C23T-v2026.11.5-HW4.0-08007000.bin`
+
+If no Rust toolchain provides `rust-lld`, point the build at the system LLVM linker:
+
+```sh
+make release RUST_LLD=$(which ld.lld)
+```
 
 Run the host regression tests with Clang:
 

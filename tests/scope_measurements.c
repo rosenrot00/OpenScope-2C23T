@@ -37,6 +37,12 @@ void compute_fft_bin(const float *input_real, uint16_t count, uint8_t window_typ
     *out_phase_rad = 0.0f;
 }
 
+uint8_t lcd_collecting(void) { return 0; }
+void lcd_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h) { (void)x; (void)y; (void)w; (void)h; }
+void lcd_pixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
+void lcd_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
+    (void)x; (void)y; (void)w; (void)h; (void)color;
+}
 void lcd_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
     (void)x0; (void)x1;
     if (color == RGB565(255, 0, 255)) {
