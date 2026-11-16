@@ -150,7 +150,7 @@ preview: tools/screen_preview.c src/ui.c src/dmm.c src/gfx.c src/ui_fonts.c
 
 # README screenshots: the preview frames at 2x, pixel-exact (needs Pillow).
 screenshots: preview tools/ppm_to_png.py
-	rm -rf docs/screenshots
+	rm -f docs/screenshots/*.png
 	python3 tools/ppm_to_png.py $(BUILD_ROOT)/preview docs/screenshots
 
 $(LLD_DIR)/ld.lld:
