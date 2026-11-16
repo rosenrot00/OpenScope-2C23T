@@ -3954,7 +3954,7 @@ static void ui_draw_status_bar(const char *title, uint16_t dot) {
 
         // Tip first, as the right half of a wider rounded shape; the body
         // then covers its left half and one background column keeps the gap.
-        gfx_round_rect((uint16_t)(tx + TIP_W - 2u * TIP_R), ty, 2u * TIP_R, TIP_H, TIP_R, D_MUTED, D_BG);
+        gfx_round_rect((uint16_t)(tx + TIP_W - 2u * TIP_R), ty, 2u * TIP_R, TIP_H, TIP_R, D_TRACK, D_BG);
         lcd_rect((uint16_t)(tx - 1u), BY, 1, BH, D_BG);
         // Body, then the level: the same rounded body in the level colour,
         // cut off where the fill ends. The number is drawn twice, cut at the
