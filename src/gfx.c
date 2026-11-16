@@ -69,6 +69,62 @@ uint16_t gfx_text_width(const lcd_font_t *font, const char *text) {
     return w;
 }
 
+// Horizontal clip for text and rounded rectangles: only columns x0..x1 are
+// drawn. Used to cut a shape or a label exactly where a fill ends (the
+// battery level and its percentage).
+static int16_t text_clip_x0 = -32768;
+static int16_t text_clip_x1 = 32767;
+
+void gfx_clip(int16_t x0, int16_t x1) {
+    text_clip_x0 = x0;
+    text_clip_x1 = x1;
+}
+
+void gfx_clip_reset(void) {
+    text_clip_x0 = -32768;
+    text_clip_x1 = 32767;
+}
+
+static void clip_rect(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t color) {
+    int16_t x1 = (int16_t)(x + (int16_t)w - 1);
+    if (!w || !h) {
+        return;
+    }
+    if (x < text_clip_x0) {
+        x = text_clip_x0;
+    }
+    if (x1 > text_clip_x1) {
+        x1 = text_clip_x1;
+    }
+    if (x <= x1) {
+        lcd_rect((uint16_t)x, (uint16_t)y, (uint16_t)(x1 - x + 1), h, color);
+    }
+}
+
+static void clip_pixel(int16_t x, int16_t y, uint16_t color) {
+    if (x >= text_clip_x0 && x <= text_clip_x1) {
+        lcd_pixel(x, y, color);
+    }
+}
+
+static void glyph_span(int16_t x, int16_t y, uint16_t n, uint16_t color) {
+    int16_t x1 = (int16_t)(x + (int16_t)n - 1);
+    if (x < text_clip_x0) {
+        x = text_clip_x0;
+    }
+    if (x1 > text_clip_x1) {
+        x1 = text_clip_x1;
+    }
+    if (x > x1) {
+        return;
+    }
+    if (x == x1) {
+        lcd_pixel(x, y, color);
+    } else {
+        lcd_rect((uint16_t)x, (uint16_t)y, (uint16_t)(x1 - x + 1), 1, color);
+    }
+}
+
 static void draw_glyph(int16_t x, int16_t y, const lcd_font_t *font, const lcd_glyph_t *g, uint16_t fg, uint16_t bg) {
     const uint8_t *p = font->data + g->offset;
     uint32_t total = (uint32_t)g->w * g->h;
@@ -102,11 +158,11 @@ static void draw_glyph(int16_t x, int16_t y, const lcd_font_t *font, const lcd_g
                     ++n;
                     --run;
                 }
-                lcd_rect((uint16_t)(gx + col), (uint16_t)(gy + row), n, 1, color);
+                glyph_span((int16_t)(gx + col), (int16_t)(gy + row), n, color);
                 i += n;
                 continue;
             }
-            lcd_pixel((int16_t)(gx + col), (int16_t)(gy + row), color);
+            glyph_span((int16_t)(gx + col), (int16_t)(gy + row), 1, color);
             ++i;
         }
     }
@@ -175,12 +231,12 @@ void gfx_round_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, 
         return;
     }
     if (!r) {
-        lcd_rect(x, y, w, h, color);
+        clip_rect((int16_t)x, (int16_t)y, w, h, color);
         return;
     }
-    lcd_rect((uint16_t)(x + r), y, (uint16_t)(w - 2u * r), h, color);
-    lcd_rect(x, (uint16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
-    lcd_rect((uint16_t)(x + w - r), (uint16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
+    clip_rect((int16_t)(x + r), (int16_t)y, (uint16_t)(w - 2u * r), h, color);
+    clip_rect((int16_t)x, (int16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
+    clip_rect((int16_t)(x + w - r), (int16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
     for (uint16_t j = 0; j < r; ++j) {
         for (uint16_t i = 0; i < r; ++i) {
             uint8_t cov = corner_coverage(r, i, j);
@@ -192,10 +248,10 @@ void gfx_round_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, 
             int16_t right = (int16_t)(x + w - 1u - i);
             int16_t top = (int16_t)(y + j);
             int16_t bottom = (int16_t)(y + h - 1u - j);
-            lcd_pixel(left, top, c);
-            lcd_pixel(right, top, c);
-            lcd_pixel(left, bottom, c);
-            lcd_pixel(right, bottom, c);
+            clip_pixel(left, top, c);
+            clip_pixel(right, top, c);
+            clip_pixel(left, bottom, c);
+            clip_pixel(right, bottom, c);
         }
     }
 }

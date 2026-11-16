@@ -3931,31 +3931,53 @@ static void dmm_draw_pill(int16_t right, uint16_t y, const char *label, uint16_t
 }
 
 static void ui_draw_status_bar(const char *title, uint16_t dot) {
-    char pct[5];
     uint8_t pct_value = battery_percent();
-    uint8_t low = battery_low_alert();
-    uint16_t fill_color = low ? battery_alert_color(D_TEXT) : D_TEXT;
-    uint16_t fill_w = battery_display_full() ? 12u : (uint16_t)((uint32_t)pct_value * 12u / 100u);
     int16_t x;
 
     lcd_rect(0, 0, LCD_WIDTH, DMM_STATUS_H, D_BG);
     gfx_round_rect(8, 8, 6, 6, 3, dot, D_BG);
     gfx_text(19, 5, &font_small, title, D_TEXT, D_BG);
 
-    gfx_round_rect(294, 7, 17, 9, 2, low ? fill_color : D_MUTED, D_BG);
-    gfx_round_rect(295, 8, 15, 7, 1, D_BG, D_MUTED);
-    lcd_rect(311, 10, 2, 3, D_MUTED);
-    if (fill_w) {
-        lcd_rect(296, 9, fill_w + 1u, 5, fill_color);
-    }
+    // Battery: a filled body with the percentage inside, split in two colours
+    // exactly at the fill edge; a small tip, straight left and rounded right.
+    {
+        enum { BX = 279, BY = 5, BW = 30, BH = 13, BR = 3, TIP_W = 2, TIP_H = 6, TIP_R = 2 };
+        uint8_t full = battery_display_full();
+        uint8_t charging = battery_charge_indicator_visible();
+        uint16_t level = (charging || full) ? D_GREEN : (pct_value <= 10u ? D_RED : (pct_value <= 20u ? D_AMBER : D_TEXT));
+        uint16_t fill = full ? BW : (uint16_t)((uint32_t)(pct_value > 100u ? 100u : pct_value) * BW / 100u);
+        uint16_t tx = BX + BW + 1u;
+        uint16_t ty = BY + (BH - TIP_H) / 2u;
+        char num[4];
+        uint16_t tw;
+        int16_t nx;
 
-    format_percent(pct);
-    x = (int16_t)(290 - (int16_t)gfx_text_width(&font_small, pct));
-    gfx_text(x, 5, &font_small, pct, battery_alert_color(D_MUTED), D_BG);
-    x = (int16_t)(x - 4);
-    if (battery_charge_indicator_visible()) {
-        dmm_icon((int16_t)(x - 11), 6, ICON_CHARGE_SM, D_GREEN, D_BG);
-        x = (int16_t)(x - 15);
+        // Tip first, as the right half of a wider rounded shape; the body
+        // then covers its left half and one background column keeps the gap.
+        gfx_round_rect((uint16_t)(tx + TIP_W - 2u * TIP_R), ty, 2u * TIP_R, TIP_H, TIP_R, D_MUTED, D_BG);
+        lcd_rect((uint16_t)(tx - 1u), BY, 1, BH, D_BG);
+        // Body, then the level: the same rounded body in the level colour,
+        // cut off where the fill ends. The number is drawn twice, cut at the
+        // same edge: dark on the fill, light on the empty part.
+        gfx_round_rect(BX, BY, BW, BH, BR, D_TRACK, D_BG);
+        if (fill) {
+            gfx_clip(-32768, (int16_t)(BX + fill - 1u));
+            gfx_round_rect(BX, BY, BW, BH, BR, level, D_BG);
+            gfx_clip_reset();
+        }
+        scope_format_u32(num, full ? 100u : pct_value);
+        tw = gfx_text_width(&font_small, num);
+        nx = (int16_t)(BX + (BW - (int16_t)tw) / 2);
+        gfx_clip((int16_t)(BX + fill), 32767);
+        gfx_text(nx, BY, &font_small, num, D_TEXT, D_TRACK);
+        gfx_clip(-32768, (int16_t)(BX + fill - 1u));
+        gfx_text(nx, BY, &font_small, num, D_BG, level);
+        gfx_clip_reset();
+        x = (int16_t)(BX - 4);
+        if (charging) {
+            dmm_icon((int16_t)(x - 11), 6, ICON_CHARGE_SM, D_GREEN, D_BG);
+            x = (int16_t)(x - 15);
+        }
     }
     if (usb_cdc_is_configured()) {
         dmm_icon((int16_t)(x - 12), 5, ICON_USB_SM, D_MUTED, D_BG);

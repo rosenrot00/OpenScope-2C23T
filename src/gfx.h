@@ -14,6 +14,10 @@ uint16_t gfx_text_width(const lcd_font_t *font, const char *text);
 // y is the top of the line box; returns the x just after the text.
 int16_t gfx_text(int16_t x, int16_t y, const lcd_font_t *font, const char *text, uint16_t fg, uint16_t bg);
 void gfx_text_right(int16_t right, int16_t y, const lcd_font_t *font, const char *text, uint16_t fg, uint16_t bg);
+// Restrict text and rounded rectangles to columns x0..x1 (inclusive) until
+// reset.
+void gfx_clip(int16_t x0, int16_t x1);
+void gfx_clip_reset(void);
 void gfx_text_center(int16_t x, int16_t y, uint16_t w, const lcd_font_t *font, const char *text, uint16_t fg, uint16_t bg);
 
 void gfx_round_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, uint16_t color, uint16_t bg);
