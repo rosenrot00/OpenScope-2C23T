@@ -407,6 +407,7 @@ typedef struct {
 static bode_saved_state_t bode_saved;
 static int32_t dmm_rel_ref_fixed;
 static char dmm_hold_value[10];
+static uint8_t dmm_hold_range_decimals;
 static char dmm_hold_unit[6];
 static char dmm_rel_unit[6];
 static char dmm_rel_value[12];
@@ -553,7 +554,6 @@ static const uint16_t D_RED = RGB565(255, 92, 108);
 static const uint16_t D_RED_TEXT = RGB565(255, 122, 134);
 static const uint16_t D_RED_CARD = RGB565(58, 18, 25);
 static const uint16_t D_RED_SUB = RGB565(255, 201, 207);
-static const uint16_t D_RED_LINE = RGB565(90, 30, 39);
 static const uint16_t D_GREEN = RGB565(52, 211, 153);
 static const uint16_t D_GREEN_CARD = RGB565(16, 36, 28);
 static const uint16_t D_GREEN_TINT = RGB565(27, 68, 52);
@@ -3877,22 +3877,33 @@ static void dmm_format_fixed(int32_t value, uint8_t stored, uint8_t shown, uint8
     }
 }
 
-// Smallest 1-2-5 step that is >= magnitude, in the same fixed-point units.
-static int32_t dmm_bar_full_scale(int32_t magnitude) {
-    static const uint8_t steps[3] = {1, 2, 5};
-    int32_t base = 1;
-    for (;;) {
-        for (uint8_t i = 0; i < 3u; ++i) {
-            int32_t fs = base * steps[i];
-            if (fs >= magnitude) {
-                return fs;
-            }
-        }
-        if (base > 100000000) {
-            return base * 10;
-        }
-        base *= 10;
+// The meter IC shows four digits, so the position of its decimal point is
+// its current range: "12.35" V is on the 0-100 V range, "1.204" kOhm on the
+// 0-10 kOhm range. The bar graph shows the reading against that range, like
+// the bar graph of a bench meter, and only rescales when the meter does.
+enum { DMM_DISPLAY_DIGITS = 4 };
+
+static int8_t dmm_range_decimals(void) {
+    if (dmm_hold_active) {
+        return (int8_t)dmm_hold_range_decimals;
     }
+    if (!dmm_has_reading() || !dmm_value_is_numeric()) {
+        return -1;
+    }
+    return (int8_t)dmm_text_decimals(dmm_value_text());
+}
+
+// Full scale of the current range in fixed-point units with `decimals`
+// places; 0 when there is no numeric reading to take a range from.
+static int32_t dmm_range_full_scale(uint8_t decimals) {
+    int8_t n = dmm_range_decimals();
+    if (n < 0) {
+        return 0;
+    }
+    if (n > DMM_DISPLAY_DIGITS) {
+        n = DMM_DISPLAY_DIGITS;
+    }
+    return dmm_pow10((uint8_t)(DMM_DISPLAY_DIGITS - n + decimals));
 }
 
 // Draws an icon from font_icons with the top of its box at y.
@@ -3974,6 +3985,16 @@ static uint16_t dmm_value_color(uint8_t warning) {
     return D_TEXT;
 }
 
+// A solid tag placed left-aligned at x; returns the x after it.
+static int16_t dmm_draw_tag_left(int16_t x, uint16_t y, const char *icon, const char *label,
+                                 uint16_t fill, uint16_t fg, uint16_t under) {
+    int16_t left;
+    uint16_t icon_w = icon ? (uint16_t)(gfx_text_width(&font_icons, icon) + 3u) : 0u;
+    uint16_t w = (uint16_t)(gfx_text_width(&font_small, label) + icon_w + 12u);
+    dmm_draw_pill_icon((int16_t)(x + (int16_t)w), y, icon, label, fill, fg, under, &left);
+    return (int16_t)(x + (int16_t)w);
+}
+
 static void dmm_draw_card_header(uint16_t card_color, uint16_t title_color, uint8_t warning) {
     int16_t right = (int16_t)(DMM_X + DMM_W - 12);
     int16_t title_end;
@@ -3986,19 +4007,21 @@ static void dmm_draw_card_header(uint16_t card_color, uint16_t title_color, uint
     if (dmm_rel_active) {
         dmm_draw_pill(right, DMM_CARD_Y + 8, "REL \xCE\x94", D_ACCENT, D_BG, card_color, &right);
     }
-    if (dmm_auto_range_display()) {
+    if (ui.dmm_mode == DMM_MODE_AUTO) {
+        // The title already says Auto Detect.
+    } else if (dmm_auto_range_display()) {
         dmm_draw_pill(right, DMM_CARD_Y + 8, "AUTO", D_ACCENT_TINT, D_ACCENT, card_color, &right);
     } else {
         dmm_draw_pill(right, DMM_CARD_Y + 8, "MANUAL", D_TRACK, D_SUB, card_color, &right);
     }
 
     if (warning) {
+        // A solid tag, not a frame: frames are what dialogs look like.
         const char *label = warning >= 2u ? "HIGH VOLTAGE" : "CAUTION";
-        uint16_t color = warning >= 2u ? D_RED_TEXT : D_AMBER;
+        uint16_t fill = warning >= 2u ? D_RED : D_AMBER;
         int16_t x = (int16_t)(title_end + 8);
-        if (x + 15 + (int16_t)gfx_text_width(&font_small, label) <= right) {
-            dmm_icon(x, DMM_CARD_Y + 8, ICON_ALERT_SM, color, card_color);
-            gfx_text((int16_t)(x + 15), DMM_CARD_Y + 9, &font_small, label, color, card_color);
+        if (x + 27 + (int16_t)gfx_text_width(&font_small, label) <= right) {
+            dmm_draw_tag_left(x, DMM_CARD_Y + 8, ICON_ALERT_SM, label, fill, D_BG, card_color);
         }
     } else if (dmm_current_mode()) {
         const char *label = dmm_high_current_mode() ? "USE HI JACK" : "USE LO JACK";
@@ -4007,68 +4030,81 @@ static void dmm_draw_card_header(uint16_t card_color, uint16_t title_color, uint
             dmm_icon(x, DMM_CARD_Y + 8, ICON_PLUG_SM, D_AMBER, card_color);
             gfx_text((int16_t)(x + 15), DMM_CARD_Y + 9, &font_small, label, D_AMBER, card_color);
         }
+    } else if (ui.dmm_mode == DMM_MODE_DIODE && !dmm_hold_active && dmm_has_reading()) {
+        // Continuity state: a small tag; the reading itself stays the big number.
+        int16_t x = (int16_t)(title_end + 8);
+        // Only the closed state gets a tag: an open circuit already reads OL.
+        if (dmm_diode_continuity_active()) {
+            dmm_draw_tag_left(x, DMM_CARD_Y + 8, 0, "CLOSED", D_GREEN, D_BG, card_color);
+        }
     }
 }
 
+static void dmm_bar_label(char *out, uint8_t size, const char *sign, int32_t fs, uint8_t decimals, const char *unit) {
+    char num[12];
+    dmm_format_fixed(fs, decimals, decimals, 1, num);
+    out[0] = 0;
+    ui_text_append(out, sign, size);
+    ui_text_append(out, num, size);
+    if (unit[0]) {
+        ui_text_append(out, " ", size);
+        ui_text_append(out, unit, size);
+    }
+}
+
+// Bar graph of the reading against the meter's current range. Positive
+// readings fill from the left on a 0..range axis, negative ones from the
+// right on a -range..0 axis. In REL the bar is centred on zero.
 static void dmm_draw_bar(const char *value, const char *unit, uint16_t card_color, uint16_t fill_color) {
     enum { BAR_Y = DMM_CARD_Y + 113, LABEL_Y = DMM_CARD_Y + 120 };
     uint8_t decimals = dmm_stat_decimals();
+    int32_t fs = dmm_range_full_scale(decimals);
     int32_t v = 0;
-    char label[20];
-    char num[12];
+    int32_t mag;
+    char label[24];
 
     gfx_round_rect(DMM_IN_X, BAR_Y, DMM_IN_W, 6, 3, D_TRACK, card_color);
-    if (!dmm_text_is_number(value) || !parse_fixed_decimal(value[0] == '+' ? value + 1 : value, decimals, &v)) {
+    if (!fs || !dmm_text_is_number(value) || !parse_fixed_decimal(value[0] == '+' ? value + 1 : value, decimals, &v)) {
         return;
     }
+    mag = v < 0 ? -v : v;
 
     if (dmm_rel_active && !dmm_hold_active) {
-        int32_t ref = 0;
-        int32_t mag = v < 0 ? -v : v;
-        int32_t fs;
         uint16_t half = DMM_IN_W / 2u;
-        uint16_t len;
-        if (parse_fixed_decimal(dmm_rel_ref_value, decimals, &ref) && ref) {
-            mag = ref < 0 ? -ref : ref;
-        }
-        fs = dmm_bar_full_scale(mag ? mag : 1);
-        mag = v < 0 ? -v : v;
-        len = (uint16_t)(mag >= fs ? half : (uint32_t)mag * half / (uint32_t)fs);
+        uint16_t len = (uint16_t)(mag >= fs ? half : (uint32_t)mag * half / (uint32_t)fs);
         if (len) {
-            gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + half - len) : (uint16_t)(DMM_IN_X + half), BAR_Y, len, 6, len < 6u ? 0u : 3u, fill_color, D_TRACK);
+            gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + half - len) : (uint16_t)(DMM_IN_X + half),
+                           BAR_Y, len, 6, len < 6u ? 0u : 3u, fill_color, D_TRACK);
         }
         lcd_rect(DMM_IN_X + half - 1u, BAR_Y - 3u, 2, 12, D_TEXT);
-        gfx_text(DMM_IN_X, LABEL_Y, &font_small, "-", D_MUTED, card_color);
-        gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, "+", D_MUTED, card_color);
-        label[0] = 0;
-        ui_text_append(label, "Reference ", sizeof(label));
+        dmm_bar_label(label, sizeof(label), "-", fs, decimals, unit);
+        gfx_text(DMM_IN_X, LABEL_Y, &font_small, label, D_MUTED, card_color);
+        dmm_bar_label(label, sizeof(label), "+", fs, decimals, unit);
+        gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, label, D_MUTED, card_color);
+        ui_text_copy(label, "Ref ", sizeof(label));
         ui_text_append(label, dmm_rel_ref_value, sizeof(label));
-        ui_text_append(label, " ", sizeof(label));
-        ui_text_append(label, unit, sizeof(label));
         gfx_text_center(DMM_IN_X, LABEL_Y, DMM_IN_W, &font_small, label, D_MUTED, card_color);
         return;
     }
 
     {
-        int32_t mag = v < 0 ? -v : v;
-        int32_t fs = dmm_bar_full_scale(mag ? mag : 1);
         uint16_t len = (uint16_t)(mag >= fs ? DMM_IN_W : (uint32_t)mag * DMM_IN_W / (uint32_t)fs);
         if (len) {
-            gfx_round_rect(DMM_IN_X, BAR_Y, len, 6, 3, fill_color, D_TRACK);
+            gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + DMM_IN_W - len) : DMM_IN_X, BAR_Y, len, 6,
+                           len < 6u ? 0u : 3u, fill_color, D_TRACK);
         }
         for (uint8_t i = 1; i < 4u; ++i) {
             lcd_rect((uint16_t)(DMM_IN_X + DMM_IN_W * i / 4u), BAR_Y + 8u, 1, 3, D_TRACK);
         }
-        gfx_text(DMM_IN_X, LABEL_Y, &font_small, "0", D_MUTED, card_color);
-        dmm_format_fixed(fs, decimals, decimals, 1, num);
-        label[0] = 0;
         if (v < 0) {
-            ui_text_append(label, "-", sizeof(label));
+            dmm_bar_label(label, sizeof(label), "-", fs, decimals, unit);
+            gfx_text(DMM_IN_X, LABEL_Y, &font_small, label, D_MUTED, card_color);
+            gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, "0", D_MUTED, card_color);
+        } else {
+            gfx_text(DMM_IN_X, LABEL_Y, &font_small, "0", D_MUTED, card_color);
+            dmm_bar_label(label, sizeof(label), "", fs, decimals, unit);
+            gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, label, D_MUTED, card_color);
         }
-        ui_text_append(label, num, sizeof(label));
-        ui_text_append(label, " ", sizeof(label));
-        ui_text_append(label, unit, sizeof(label));
-        gfx_text_right(DMM_IN_X + DMM_IN_W, LABEL_Y, &font_small, label, D_MUTED, card_color);
     }
 }
 
@@ -4079,17 +4115,13 @@ static void dmm_draw_reading_card(void) {
     const char *value = dmm_display_value();
     const char *unit = dmm_unit_pretty(dmm_display_unit());
     char signed_value[12];
-    uint16_t value_color = dmm_value_color(warning);
-    uint16_t unit_color = warning ? value_color : D_ACCENT;
+    uint8_t closed = (uint8_t)(ui.dmm_mode == DMM_MODE_DIODE && !dmm_hold_active && dmm_diode_continuity_active());
+    uint16_t value_color = closed ? D_GREEN : dmm_value_color(warning);
+    uint16_t unit_color = (warning || closed) ? value_color : D_ACCENT;
     uint16_t bar_color = warning >= 2u ? D_RED : (warning ? D_AMBER : D_ACCENT);
     int16_t x;
 
-    if (warning) {
-        gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_CARD_H, 14, warning >= 2u ? D_RED : D_AMBER, D_BG);
-        gfx_round_rect(DMM_X + 2u, DMM_CARD_Y + 2u, DMM_W - 4u, DMM_CARD_H - 4u, 12, card, warning >= 2u ? D_RED : D_AMBER);
-    } else {
-        gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_CARD_H, 14, card, D_BG);
-    }
+    gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_CARD_H, 14, card, D_BG);
     dmm_draw_card_header(card, D_SUB, warning);
 
     // A relative reading is a difference: show its sign either way.
@@ -4118,8 +4150,18 @@ static void dmm_draw_reading_card(void) {
         }
     }
 
-    if (!value[0]) {
+    if (!value[0] || ui_text_equal(value, "-----")) {
+        // Waiting for the first reading.
         gfx_text(DMM_IN_X, VALUE_Y, &font_huge, "----", D_TRACK, card);
+    } else if (ui_text_equal(value, "OPEN")) {
+        // Over limit / open circuit, written the way meters write it.
+        x = gfx_text(DMM_IN_X, VALUE_Y, &font_huge, "OL", D_SUB, card);
+        if (unit[0]) {
+            gfx_text((int16_t)(x + 6), (int16_t)(VALUE_Y + font_huge.ascent - font_large.ascent), &font_large, unit, D_MUTED, card);
+        }
+    } else if (ui_text_equal(value, "AUTO")) {
+        // AUTO DETECT before the meter has settled on a quantity.
+        gfx_text(DMM_IN_X, VALUE_Y + 26, &font_large, "Detecting", D_MUTED, card);
     } else if (dmm_text_is_number(value) &&
                gfx_text_width(&font_huge, value) + 6u + gfx_text_width(&font_large, unit) <= DMM_IN_W) {
         x = gfx_text(DMM_IN_X, VALUE_Y, &font_huge, value, value_color, card);
@@ -4133,7 +4175,10 @@ static void dmm_draw_reading_card(void) {
         }
     }
 
-    dmm_draw_bar(value, unit, card, bar_color);
+    // A temperature has no meaningful "fraction of range".
+    if (ui.dmm_mode != DMM_MODE_TEMP) {
+        dmm_draw_bar(value, unit, card, bar_color);
+    }
 }
 
 static void dmm_draw_stats(void) {
@@ -4158,41 +4203,23 @@ static void dmm_draw_stats(void) {
     }
 }
 
-// One tall status card: continuity, live wire. `icon` 0 = check, 1 = bolt.
-static void dmm_draw_state_card(uint16_t card, uint16_t sub, uint16_t accent, uint16_t line,
-                                uint16_t icon_bg, uint16_t icon_fg, uint8_t icon,
-                                const char *pill_icon, const char *pill, uint16_t pill_bg, uint16_t pill_fg,
-                                const char *headline, uint16_t headline_color,
-                                const char *detail, const char *detail_unit,
-                                const char *footer_left, const char *footer_right) {
-    enum { CX = DMM_X + 44, CY = DMM_CARD_Y + 82 };
-    int16_t right = (int16_t)(DMM_X + DMM_W - 12);
+// Live wire: one tall card. Detected turns it red; the idle card says how
+// to use the mode, which is the one thing people get wrong with it.
+static void dmm_draw_live_card(uint8_t detected) {
+    enum { CX = DMM_X + 44, CY = DMM_CARD_Y + 86 };
+    uint16_t card = detected ? D_RED_CARD : D_CARD;
+    uint16_t icon_bg = detected ? D_RED : D_TRACK;
 
     gfx_round_rect(DMM_X, DMM_CARD_Y, DMM_W, DMM_TALL_H, 14, card, D_BG);
-    gfx_text(DMM_IN_X, DMM_CARD_Y + 7, &font_medium, dmm_mode_names[ui.dmm_mode], sub, card);
-    if (pill) {
-        dmm_draw_pill_icon(right, DMM_CARD_Y + 8, pill_icon, pill, pill_bg, pill_fg, card, &right);
-    }
-
+    gfx_text(DMM_IN_X, DMM_CARD_Y + 7, &font_medium, dmm_mode_names[ui.dmm_mode], detected ? D_RED_SUB : D_SUB, card);
     gfx_round_rect(CX - 28, CY - 28, 56, 56, 28, icon_bg, card);
-    if (icon == 0u) {
-        dmm_icon(CX - 17, CY - 17, ICON_CHECK_XL, icon_fg, icon_bg);
+    dmm_icon(CX - 16, CY - 16, ICON_ZAP_XL, detected ? D_BG : D_MUTED, icon_bg);
+    if (detected) {
+        gfx_text(DMM_X + 88, CY - 28, &font_large, "Detected", D_TEXT, card);
+        gfx_text(DMM_X + 89, CY + 6, &font_medium, "Confirm with a voltage reading", D_RED_SUB, card);
     } else {
-        dmm_icon(CX - 16, CY - 16, ICON_ZAP_XL, icon_fg, icon_bg);
-    }
-
-    gfx_text(DMM_X + 88, CY - 28, &font_large, headline, headline_color, card);
-    if (detail && detail[0]) {
-        int16_t x = gfx_text(DMM_X + 89, CY + 6, &font_medium, detail, sub, card);
-        if (detail_unit && detail_unit[0]) {
-            gfx_text((int16_t)(x + 4), CY + 6, &font_medium, detail_unit, accent, card);
-        }
-    }
-
-    lcd_rect(DMM_IN_X, DMM_CARD_Y + DMM_TALL_H - 25u, DMM_IN_W, 1, line);
-    gfx_text(DMM_IN_X, DMM_CARD_Y + DMM_TALL_H - 19, &font_small, footer_left, sub, card);
-    if (footer_right) {
-        gfx_text_right(DMM_IN_X + DMM_IN_W, DMM_CARD_Y + DMM_TALL_H - 19, &font_small, footer_right, sub, card);
+        gfx_text(DMM_X + 88, CY - 28, &font_large, "No live wire", D_SUB, card);
+        gfx_text(DMM_X + 89, CY + 6, &font_medium, "Touch the red probe to the wire", D_MUTED, card);
     }
 }
 
@@ -4200,25 +4227,7 @@ static void draw_dmm_immersive_panel(void) {
     lcd_rect(0, DMM_STATUS_H, LCD_WIDTH, DMM_KEYS_Y - DMM_STATUS_H - 2u, D_BG);
 
     if (ui.dmm_mode == DMM_MODE_LIVE) {
-        if (dmm_live_wire_detected()) {
-            dmm_draw_state_card(D_RED_CARD, D_RED_SUB, D_RED, D_RED_LINE, D_RED, D_BG, 1,
-                                ICON_ALERT_SM, "DETECTED", D_RED, D_BG, "Live wire", D_TEXT,
-                                "Mains phase on the red probe", 0,
-                                "Phase check only: confirm with a voltage reading", 0);
-        } else {
-            dmm_draw_state_card(D_CARD, D_SUB, D_ACCENT, D_TRACK, D_TRACK, D_MUTED, 1,
-                                0, "SCANNING", D_ACCENT_TINT, D_ACCENT, "No live wire", D_SUB,
-                                "Touch the red probe to the wire", 0,
-                                "Red lead in the V jack; beeps on a live phase", 0);
-        }
-        return;
-    }
-
-    if (ui.dmm_mode == DMM_MODE_DIODE && !dmm_hold_active && !dmm_rel_active && dmm_diode_continuity_active()) {
-        dmm_draw_state_card(D_GREEN_CARD, D_GREEN_SUB, D_GREEN, D_GREEN_TINT, D_GREEN, D_BG, 0,
-                            ICON_BEEP_SM, "BEEP", D_GREEN_TINT, D_GREEN, "Connected", D_TEXT,
-                            dmm_display_value(), dmm_unit_pretty(dmm_display_unit()),
-                            "Beeps below 50 \xCE\xA9", "Open circuit shows OPEN");
+        dmm_draw_live_card(dmm_live_wire_detected());
         return;
     }
 
@@ -7091,10 +7100,6 @@ static void draw_mode_menu_card(uint8_t index) {
     gfx_text((int16_t)(x + 17u), (int16_t)(y + 16u), &font_icons, card->icon,
              selected ? D_BG : card->accent, selected ? card->accent : card->tint);
 
-    if (selected) {
-        int16_t left;
-        dmm_draw_pill_icon((int16_t)(x + W - 10u), (uint16_t)(y + 11u), ICON_PLAYPAUSE_SM, "Open", card->tint, card->accent, bg, &left);
-    }
 
     gfx_text((int16_t)(x + 12u), (int16_t)(y + 48u), &font_medium, card->title, selected ? D_TEXT : D_SUB, bg);
     gfx_text((int16_t)(x + 12u), (int16_t)(y + 64u), &font_small, card->subtitle, D_MUTED, bg);
@@ -8393,6 +8398,7 @@ static void dmm_toggle_hold(void) {
     }
 
     ui_text_copy(dmm_hold_value, dmm_live_display_value(), sizeof(dmm_hold_value));
+    dmm_hold_range_decimals = dmm_text_decimals(dmm_value_text());
     ui_text_copy(dmm_hold_unit, dmm_live_display_unit(), sizeof(dmm_hold_unit));
     dmm_hold_active = 1;
     dmm_stats_reset();

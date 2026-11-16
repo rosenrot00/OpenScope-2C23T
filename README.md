@@ -10,13 +10,13 @@ This firmware is still under active development. Use it at your own risk.
 
 | | | |
 |---|---|---|
-| <img src="docs/screenshots/menu-1.png" width="320" alt="Main menu"/> | <img src="docs/screenshots/01-dc-voltage.png" width="320" alt="Multimeter: DC voltage"/> | <img src="docs/screenshots/02-resistance-rel.png" width="320" alt="Multimeter: resistance with REL"/> |
-| <img src="docs/screenshots/03-continuity.png" width="320" alt="Multimeter: continuity"/> | <img src="docs/screenshots/04-ac-voltage-hold-high.png" width="320" alt="Multimeter: AC voltage, HOLD and high-voltage warning"/> | <img src="docs/screenshots/05-live-wire.png" width="320" alt="Multimeter: live wire detected"/> |
+| <img src="docs/screenshots/menu-1.png" width="320" alt="Main menu"/> | <img src="docs/screenshots/dmm-02-dc-voltage.png" width="320" alt="Multimeter: DC voltage"/> | <img src="docs/screenshots/dmm-03-dc-voltage-negative.png" width="320" alt="Multimeter: negative DC voltage"/> |
+| <img src="docs/screenshots/dmm-07-ac-high-voltage.png" width="320" alt="Multimeter: high voltage"/> | <img src="docs/screenshots/dmm-17-continuity-closed.png" width="320" alt="Multimeter: continuity closed"/> | <img src="docs/screenshots/dmm-14-rel-positive.png" width="320" alt="Multimeter: relative mode"/> |
 | <img src="docs/screenshots/scope-1.png" width="320" alt="Oscilloscope"/> | <img src="docs/screenshots/scope-row-trigger.png" width="320" alt="Oscilloscope: trigger settings"/> | <img src="docs/screenshots/scope-math-menu.png" width="320" alt="Oscilloscope: Analytical / Math menu"/> |
 | <img src="docs/screenshots/scope-bode.png" width="320" alt="Oscilloscope: Bode plot"/> | <img src="docs/screenshots/gen-1.png" width="320" alt="Signal generator"/> | <img src="docs/screenshots/gen-sweep-menu.png" width="320" alt="Signal generator: sweep and modulation"/> |
-| <img src="docs/screenshots/settings-1.png" width="320" alt="Settings"/> | <img src="docs/screenshots/settings-reset-confirm.png" width="320" alt="Settings: factory reset dialog"/> | <img src="docs/screenshots/07-dc-current-low.png" width="320" alt="Multimeter: low current"/> |
+| <img src="docs/screenshots/settings-1.png" width="320" alt="Settings"/> | <img src="docs/screenshots/settings-reset-confirm.png" width="320" alt="Settings: factory reset dialog"/> | <img src="docs/screenshots/dmm-26-live-detected.png" width="320" alt="Multimeter: live wire detected"/> |
 
-These images are rendered on a PC by the firmware's own drawing code (`make screenshots`), so they match the 320×240 screen pixel for pixel, shown at 2× without smoothing. Signals and readings in them are synthetic test inputs. All screens are in [`docs/screenshots`](docs/screenshots).
+These images are rendered on a PC by the firmware's own drawing code (`make screenshots`), so they match the 320×240 screen pixel for pixel, shown at 2× without smoothing. Signals and readings in them are synthetic test inputs. Every state of every screen (waiting, negative readings, OL, REL, AUTO detect, warnings and more) is listed in [`docs/screenshots`](docs/screenshots/README.md).
 
 ## What This Adds
 
@@ -29,7 +29,7 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Signal-generator sweep and FM menu** opened by long-pressing `CH1`, with linear/logarithmic sweeps and sine, triangle, or square frequency modulation.
 - **Arbitrary waveform playback from CSV files** stored on the device's USB drive. See the ready-to-use [sine](examples/sine.csv) and [action-potential](https://github.com/user-attachments/files/29925821/HH.csv) examples.
 - **Modern interface** for every screen: a flat dark theme with rounded cards, anti-aliased Inter type, Lucide-style icons, proper unit symbols (Ω, µ, °C) and one colour per tool. See [Interface](#interface).
-- **Multimeter screen** with a large reading, a bar graph (centred on zero in REL mode), a MIN / AVG / MAX row, and dedicated continuity and live-wire cards.
+- **Multimeter screen** with a large reading, a bar graph against the meter's current range (centred on zero in REL mode), a MIN / AVG / MAX row, and a dedicated live-wire card.
 - **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display, and clearer scale/readout handling.
 - **Runtime USB mass storage** while the device is running.
 - **USB serial telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
@@ -44,8 +44,9 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 Every tool uses one visual language: a status bar (tool name, USB, charging and battery), rounded cards, and rows of rounded chips for the settings you change with the arrow keys. The selected chip or row is outlined in the tool's colour: blue for the multimeter, green for the oscilloscope, violet for the signal generator, and amber for settings.
 
 - **Main menu (`MENU`):** a 2×2 grid. Use the arrow keys (left/right and up/down) to choose and `‖▶` to open.
-- **Multimeter:** the four group keys (V/Ω, Test, Sense, Current) are shown as pills at the bottom. HOLD, REL and AUTO/MANUAL appear as tags on the reading card. Readings above 30 V AC or 60 V DC get a red outline and a HIGH VOLTAGE label.
-- **Continuity:** in the Diode / Continuity mode, readings below 50 Ω switch to a green "Connected" card.
+- **Multimeter:** the four group keys (V/Ω, Test, Sense, Current) are shown as pills at the bottom. HOLD, REL and AUTO/MANUAL appear as tags on the reading card. Readings above 30 V AC or 60 V DC turn red and get a solid HIGH VOLTAGE tag (30–60 V DC: amber CAUTION). An open circuit or overload reads OL.
+- **Bar graph:** the meter shows four digits, so its decimal point marks its current range ("12.35" V is on the 0–100 V range). The bar shows the reading against that range and only rescales when the meter changes range. Negative readings fill from the right on a −range…0 axis. In REL the bar is centred on zero and spans ±range. Temperature has no bar.
+- **Continuity:** in the Diode / Continuity mode the resistance stays the big number; below 50 Ω it turns green and a small CLOSED tag appears.
 - **Live wire:** put the red lead in the V jack and touch the probe tip to the wire. It is a single-probe phase check, so confirm with a voltage measurement.
 - **Oscilloscope:** a dotted graticule, numbered channel tags, a trigger-level tag with an edge icon, measurement pills, and a bottom bar with CH1/CH2 V/div, the timebase and RUN/HOLD/ROLL. The Analytical / Math, FFT and Bode views use the same style.
 - **Signal generator:** a waveform card with a live preview, an Output card (green when on), and digit-by-digit editors for frequency, duty cycle and amplitude.

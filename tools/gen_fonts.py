@@ -34,7 +34,7 @@ EXTRA = "Ωµ°Δ"  # Ohm, micro, degree, Delta
 
 # name, file, pixel size, characters
 FONTS = [
-    ("font_huge", "Inter-SemiBold.ttf", 56, "0123456789.-+ "),
+    ("font_huge", "Inter-SemiBold.ttf", 56, "0123456789.-+ OL"),
     ("font_large", "Inter-SemiBold.ttf", 26,
      " 0123456789.-+%" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" + EXTRA),
     ("font_medium", "Inter-SemiBold.ttf", 13, ASCII + EXTRA + "—"),
@@ -70,7 +70,7 @@ def build(name, path, size, chars):
     for ch in sorted(set(chars), key=ord):
         adv = round(font.getlength(ch))
         shift = 0
-        if ch.isdigit() or (name == "font_huge" and ch in " +-"):
+        if ch.isdigit() or (name == "font_huge" and ch == " "):
             shift = (digit_adv - adv) // 2
             adv = digit_adv
         if ch == " ":

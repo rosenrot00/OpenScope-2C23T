@@ -154,46 +154,125 @@ static void shot(const char *name) {
 }
 
 int main(void) {
+    // ---- Multimeter: every state the reading card can be in ----
+    // Frames go through the real decoder; flags as in tests/dmm.c:
+    // dots bit 0 = minus sign, bit n = decimal point before digit n.
+
+    enter(DMM_MODE_DCV);
+    shot("dmm-01-waiting");
+
     enter(DMM_MODE_DCV);
     feed(1, "1230", 4, 0, 0, 2); feed(1, "1238", 4, 0, 0, 2); feed(1, "1235", 4, 0, 0, 2);
-    shot("01-dc-voltage");
+    shot("dmm-02-dc-voltage");
+
+    enter(DMM_MODE_DCV);
+    feed(1, "1230", 5, 0, 0, 2); feed(1, "1238", 5, 0, 0, 2); feed(1, "1235", 5, 0, 0, 2);
+    shot("dmm-03-dc-voltage-negative");
+
+    enter(DMM_MODE_DCV);
+    feed(1, "0003", 8, 0, 0, 2);
+    shot("dmm-04-dc-voltage-near-zero");
+
+    enter(DMM_MODE_DCV);
+    ui.auto_range = 0;
+    feed(1, "0503", 4, 0, 0, 2);
+    shot("dmm-05-manual-range");
+
+    enter(DMM_MODE_DCV);
+    feed(1, "4520", 4, 0, 0, 2);
+    shot("dmm-06-dc-caution");
+
+    enter(DMM_MODE_ACV);
+    feed(2, "2298", 8, 0, 0, 2); feed(2, "2331", 8, 0, 0, 2); feed(2, "2317", 8, 0, 0, 2);
+    shot("dmm-07-ac-high-voltage");
+
+    enter(DMM_MODE_DCV);
+    feed(1, "1235", 4, 0, 0, 2);
+    dmm_toggle_hold();
+    shot("dmm-08-hold");
+
+    enter(DMM_MODE_AUTO);
+    feed(0, "AUTO", 0, 0, 0, 2);
+    shot("dmm-09-auto-detecting");
+
+    enter(DMM_MODE_AUTO);
+    feed(0, "0503", 4, 0, 0, 2); feed(0, "0507", 4, 0, 0, 2);
+    shot("dmm-10-auto-voltage");
+
+    enter(DMM_MODE_AUTO);
+    feed(0, "1204", 2, 0x40, 0x20, 0);
+    shot("dmm-11-auto-resistance");
+
+    enter(DMM_MODE_RES);
+    feed(3, "1201", 2, 0x40, 0x20, 0); feed(3, "1210", 2, 0x40, 0x20, 0); feed(3, "1204", 2, 0x40, 0x20, 0);
+    shot("dmm-12-resistance");
+
+    enter(DMM_MODE_RES);
+    feed(3, "00L0", 4, 0, 0x24, 0);
+    shot("dmm-13-resistance-open");
 
     enter(DMM_MODE_RES);
     feed(3, "0998", 2, 0x40, 0x20, 0);
     dmm_toggle_relative();
     feed(3, "1201", 2, 0x40, 0x20, 0); feed(3, "1210", 2, 0x40, 0x20, 0); feed(3, "1204", 2, 0x40, 0x20, 0);
-    shot("02-resistance-rel");
+    shot("dmm-14-rel-positive");
+
+    enter(DMM_MODE_RES);
+    feed(3, "1204", 2, 0x40, 0x20, 0);
+    dmm_toggle_relative();
+    feed(3, "0998", 2, 0x40, 0x20, 0);
+    shot("dmm-15-rel-negative");
+
+    enter(DMM_MODE_RES);
+    feed(3, "1204", 2, 0x40, 0x20, 0);
+    dmm_toggle_relative();
+    feed(3, "00L0", 4, 0, 0x24, 0);
+    shot("dmm-16-rel-no-reading");
 
     enter(DMM_MODE_DIODE);
     feed(4, "0004", 8, 0, 0x20, 0);
-    charging = 1;
-    shot("03-continuity");
-    charging = 0;
+    shot("dmm-17-continuity-closed");
 
-    enter(DMM_MODE_ACV);
-    feed(2, "2298", 8, 0, 0, 2); feed(2, "2331", 8, 0, 0, 2); feed(2, "2317", 8, 0, 0, 2);
-    dmm_toggle_hold();
-    shot("04-ac-voltage-hold-high");
+    enter(DMM_MODE_DIODE);
+    feed(4, "00L0", 4, 0, 0, 2);
+    shot("dmm-18-continuity-open");
 
-    enter(DMM_MODE_LIVE);
-    ui_set_live_wire_detected(1);
-    shot("05-live-wire");
+    enter(DMM_MODE_DIODE);
+    feed(4, "0624", 2, 0, 0, 2);
+    shot("dmm-19-diode");
 
-    enter(DMM_MODE_LIVE);
-    shot("06-live-idle");
+    enter(DMM_MODE_CAP);
+    feed(5, "0470", 8, 0x20, 0x10, 0);
+    shot("dmm-20-capacitance");
+
+    enter(DMM_MODE_TEMP);
+    feed(8, "0238", 8, 0, 0, 0x20);
+    shot("dmm-21-temperature-c");
+
+    enter(DMM_MODE_TEMP);
+    feed(8, "0748", 8, 0, 0, 0x10);
+    shot("dmm-22-temperature-f");
+
+    enter(DMM_MODE_AC_HI_CURR);
+    feed(9, "1234", 2, 0, 0, 1);
+    shot("dmm-23-ac-current-high");
 
     enter(DMM_MODE_DC_LO_CURR);
     feed(12, "1234", 2, 0, 1, 1);
-    batt_pct = 9;
-    shot("07-dc-current-low");
-    batt_pct = 87;
+    shot("dmm-24-dc-current-low");
 
-    enter(DMM_MODE_RES);
-    feed(3, "00L0", 4, 0, 0x24, 0);
-    shot("08-resistance-open");
+    enter(DMM_MODE_LIVE);
+    shot("dmm-25-live-idle");
+
+    enter(DMM_MODE_LIVE);
+    ui_set_live_wire_detected(1);
+    shot("dmm-26-live-detected");
 
     enter(DMM_MODE_DCV);
-    shot("09-no-reading");
+    feed(1, "1235", 4, 0, 0, 2);
+    batt_pct = 9; charging = 1;
+    shot("dmm-27-low-battery-charging-usb");
+    batt_pct = 87; charging = 0;
 
     ui.overlay = UI_OVERLAY_MODE_MENU;
     for (uint8_t i = 0; i < 4u; ++i) {
