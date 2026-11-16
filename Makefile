@@ -60,7 +60,7 @@ LDFLAGS := \
 	-Wl,--gc-sections \
 	-Wl,-Map,$(BUILD)/$(PROJECT).map
 
-SRCS := src/startup.c src/board.c src/display.c src/font.c src/dmm.c src/settings.c src/fpga.c src/scope.c src/siggen.c src/fw_update.c src/screenshot.c src/w25q.c src/usb_msc.c src/bootloader.c src/ui.c src/main.c src/fft.c src/arb_csv.c
+SRCS := src/startup.c src/board.c src/display.c src/font.c src/dmm.c src/settings.c src/fpga.c src/scope.c src/siggen.c src/fw_update.c src/screenshot.c src/w25q.c src/usb_msc.c src/bootloader.c src/ui.c src/main.c src/fft.c src/arb_csv.c src/gfx.c src/ui_fonts.c
 ifeq ($(HW_TARGET_HW40),1)
 SRCS += src/fpga_bitstream_hw4.c
 else
@@ -83,7 +83,7 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4 \
                   $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4
 
-.PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test
+.PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test preview screenshots
 
 all: $(BUILD)/$(PROJECT).bin
 
@@ -113,9 +113,9 @@ $(BUILD_ROOT)/tests/bootloader_export-old $(BUILD_ROOT)/tests/bootloader_export-
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) -DAPP_BASE_ADDR=$(if $(filter %-hw4,$@),0x08007000u,0x08008000u) $< $(HOST_TEST_LINK) -o $@
 
-$(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4: tests/generator.c src/ui.c src/siggen.c src/siggen.h src/fft.c src/settings.h src/fpga.h
+$(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4: tests/generator.c src/ui.c src/siggen.c src/siggen.h src/fft.c src/settings.h src/fpga.h src/gfx.c src/ui_fonts.c
 	@mkdir -p $(dir $@)
-	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< src/siggen.c src/fft.c $(HOST_TEST_LINK) -o $@
+	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< src/siggen.c src/fft.c src/gfx.c src/ui_fonts.c $(HOST_TEST_LINK) -o $@
 
 $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4: tests/fpga_timing.c src/fpga.c src/fpga.h src/hw.h
 	@mkdir -p $(dir $@)
@@ -125,13 +125,13 @@ $(BUILD_ROOT)/tests/dmm-old $(BUILD_ROOT)/tests/dmm-hw4: tests/dmm.c src/dmm.c s
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) -DEXPECTED_FW_VERSION='"$(VERSION)"' $< $(HOST_TEST_LINK) -o $@
 
-$(BUILD_ROOT)/tests/%-old: tests/%.c src/ui.c src/settings.h src/fft.h
+$(BUILD_ROOT)/tests/%-old: tests/%.c src/ui.c src/settings.h src/fft.h src/gfx.c src/ui_fonts.c
 	@mkdir -p $(dir $@)
-	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=0 $< $(HOST_TEST_LINK) -o $@
+	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=0 $< src/gfx.c src/ui_fonts.c $(HOST_TEST_LINK) -o $@
 
-$(BUILD_ROOT)/tests/%-hw4: tests/%.c src/ui.c src/settings.h src/fft.h
+$(BUILD_ROOT)/tests/%-hw4: tests/%.c src/ui.c src/settings.h src/fft.h src/gfx.c src/ui_fonts.c
 	@mkdir -p $(dir $@)
-	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=1 $< $(HOST_TEST_LINK) -o $@
+	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=1 $< src/gfx.c src/ui_fonts.c $(HOST_TEST_LINK) -o $@
 
 $(BUILD_ROOT)/tests/fft: tests/fft.c src/fft.c src/fft.h
 	@mkdir -p $(dir $@)
@@ -140,6 +140,18 @@ $(BUILD_ROOT)/tests/fft: tests/fft.c src/fft.c src/fft.h
 $(BUILD_ROOT)/tests/settings: tests/settings.c src/settings.c src/settings.h src/hw.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) $< $(HOST_TEST_LINK) -o $@
+
+# Render every screen on the host with the firmware's own drawing code:
+# build/preview/*.ppm are the exact 320x240 framebuffers.
+preview: tools/screen_preview.c src/ui.c src/dmm.c src/gfx.c src/ui_fonts.c
+	@mkdir -p $(BUILD_ROOT)/preview
+	$(CLANG) -std=c11 -O1 -Wall -Wextra -ffunction-sections -fdata-sections -DHW_TARGET_HW40=1 -DSCOPE_UI_SAFE_STUB=0 -DEXPECTED_FW_VERSION='"$(VERSION)"' $< $(HOST_TEST_LINK) -o $(BUILD_ROOT)/preview/run
+	$(BUILD_ROOT)/preview/run
+
+# README screenshots: the preview frames at 2x, pixel-exact (needs Pillow).
+screenshots: preview tools/ppm_to_png.py
+	rm -f docs/screenshots/*.png
+	python3 tools/ppm_to_png.py $(BUILD_ROOT)/preview docs/screenshots
 
 $(LLD_DIR)/ld.lld:
 	@test -n "$(RUST_LLD)" || (echo "rust-lld not found; install an ARM linker or Rust toolchain with rust-lld" >&2; exit 1)
