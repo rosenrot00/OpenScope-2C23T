@@ -81,7 +81,9 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/scope_measurements-old $(BUILD_ROOT)/tests/scope_measurements-hw4 \
                   $(BUILD_ROOT)/tests/fft $(BUILD_ROOT)/tests/settings \
                   $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4 \
-                  $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4
+                  $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4 \
+                  $(BUILD_ROOT)/tests/ui_render-old $(BUILD_ROOT)/tests/ui_render-hw4 \
+                  $(BUILD_ROOT)/tests/gfx
 
 .PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test preview screenshots
 
@@ -104,6 +106,9 @@ test: $(HOST_TEST_BINS)
 	$(BUILD_ROOT)/tests/generator-hw4
 	$(BUILD_ROOT)/tests/fpga_timing-old
 	$(BUILD_ROOT)/tests/fpga_timing-hw4
+	$(BUILD_ROOT)/tests/ui_render-old
+	$(BUILD_ROOT)/tests/ui_render-hw4
+	$(BUILD_ROOT)/tests/gfx
 
 $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloader-hw4: tests/bootloader.c src/bootloader.c src/bootloader.h src/app_config.h
 	@mkdir -p $(dir $@)
@@ -141,9 +146,17 @@ $(BUILD_ROOT)/tests/settings: tests/settings.c src/settings.c src/settings.h src
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) $< $(HOST_TEST_LINK) -o $@
 
+$(BUILD_ROOT)/tests/ui_render-old $(BUILD_ROOT)/tests/ui_render-hw4: tests/ui_render.c tools/host_display.h src/ui.c src/dmm.c src/display.c src/font.c src/gfx.c src/ui_fonts.c src/fft.c
+	@mkdir -p $(dir $@)
+	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< src/gfx.c src/ui_fonts.c $(HOST_TEST_LINK) -o $@
+
+$(BUILD_ROOT)/tests/gfx: tests/gfx.c src/gfx.c src/gfx.h src/ui_fonts.c src/ui_fonts.h
+	@mkdir -p $(dir $@)
+	$(CLANG) $(HOST_TEST_FLAGS) $< src/ui_fonts.c $(HOST_TEST_LINK) -o $@
+
 # Render every screen on the host with the firmware's own drawing code:
 # build/preview/*.ppm are the exact 320x240 framebuffers.
-preview: tools/screen_preview.c src/ui.c src/dmm.c src/gfx.c src/ui_fonts.c
+preview: tools/screen_preview.c tools/host_display.h src/ui.c src/dmm.c src/display.c src/gfx.c src/ui_fonts.c
 	@mkdir -p $(BUILD_ROOT)/preview
 	$(CLANG) -std=c11 -O1 -Wall -Wextra -ffunction-sections -fdata-sections -DHW_TARGET_HW40=1 -DSCOPE_UI_SAFE_STUB=0 -DEXPECTED_FW_VERSION='"$(VERSION)"' $< $(HOST_TEST_LINK) -o $(BUILD_ROOT)/preview/run
 	$(BUILD_ROOT)/preview/run

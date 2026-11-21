@@ -109,12 +109,17 @@ static void clip_pixel(int16_t x, int16_t y, uint16_t color) {
 
 static void glyph_span(int16_t x, int16_t y, uint16_t n, uint16_t color) {
     int16_t x1 = (int16_t)(x + (int16_t)n - 1);
+    if (y < 0 || y >= (int16_t)LCD_HEIGHT) {
+        return;
+    }
     if (x < text_clip_x0) {
         x = text_clip_x0;
     }
     if (x1 > text_clip_x1) {
         x1 = text_clip_x1;
     }
+    if (x < 0) x = 0;
+    if (x1 >= (int16_t)LCD_WIDTH) x1 = LCD_WIDTH - 1;
     if (x > x1) {
         return;
     }
@@ -148,22 +153,15 @@ static void draw_glyph(int16_t x, int16_t y, const lcd_font_t *font, const lcd_g
             continue;
         }
         uint16_t color = gfx_blend(fg, bg, alpha == 15u ? 16u : (uint8_t)(alpha + (alpha >> 3)));
-        while (run--) {
+        while (run) {
             uint16_t col = (uint16_t)(i % g->w);
             uint16_t row = (uint16_t)(i / g->w);
-            if (alpha == 15u && run) {
-                // Opaque spans within one row go out as a single rect.
-                uint16_t n = 1;
-                while (run && col + n < g->w) {
-                    ++n;
-                    --run;
-                }
-                glyph_span((int16_t)(gx + col), (int16_t)(gy + row), n, color);
-                i += n;
-                continue;
-            }
-            glyph_span((int16_t)(gx + col), (int16_t)(gy + row), 1, color);
-            ++i;
+            uint16_t n = (uint16_t)(g->w - col);
+            if (n > run) n = run;
+            // All pixels in an RLE run share a colour, including soft edges.
+            glyph_span((int16_t)(gx + col), (int16_t)(gy + row), n, color);
+            i += n;
+            run = (uint8_t)(run - n);
         }
     }
 }
@@ -203,6 +201,17 @@ void gfx_text_center(int16_t x, int16_t y, uint16_t w, const lcd_font_t *font, c
 static uint8_t corner_coverage(uint16_t r, uint16_t i, uint16_t j) {
     int32_t c = (int32_t)r * 8;
     int32_t rr = c * c;
+    int32_t dx = c - (int32_t)i * 8 - 7;
+    int32_t dy = c - (int32_t)j * 8 - 7;
+    if (dx * dx + dy * dy > rr) {
+        return 0;
+    }
+    dx += 6;
+    dy += 6;
+    if (dx * dx + dy * dy <= rr) {
+        return 16;
+    }
+    // Only boundary pixels need the full 4x4 coverage calculation.
     uint8_t hits = 0;
     for (uint8_t sy = 0; sy < 4u; ++sy) {
         int32_t dy = ((int32_t)j * 4 + sy) * 2 + 1 - c;
@@ -238,20 +247,31 @@ void gfx_round_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t r, 
     clip_rect((int16_t)x, (int16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
     clip_rect((int16_t)(x + w - r), (int16_t)(y + r), r, (uint16_t)(h - 2u * r), color);
     for (uint16_t j = 0; j < r; ++j) {
-        for (uint16_t i = 0; i < r; ++i) {
+        int16_t top = (int16_t)(y + j);
+        int16_t bottom = (int16_t)(y + h - 1u - j);
+        uint16_t i;
+        for (i = 0; i < r; ++i) {
             uint8_t cov = corner_coverage(r, i, j);
             if (!cov) {
                 continue;
             }
+            if (cov == 16u) {
+                break;
+            }
             uint16_t c = gfx_blend(color, bg, cov);
             int16_t left = (int16_t)(x + i);
             int16_t right = (int16_t)(x + w - 1u - i);
-            int16_t top = (int16_t)(y + j);
-            int16_t bottom = (int16_t)(y + h - 1u - j);
             clip_pixel(left, top, c);
             clip_pixel(right, top, c);
             clip_pixel(left, bottom, c);
             clip_pixel(right, bottom, c);
+        }
+        if (i < r) {
+            uint16_t n = (uint16_t)(r - i);
+            clip_rect((int16_t)(x + i), top, n, 1, color);
+            clip_rect((int16_t)(x + w - r), top, n, 1, color);
+            clip_rect((int16_t)(x + i), bottom, n, 1, color);
+            clip_rect((int16_t)(x + w - r), bottom, n, 1, color);
         }
     }
 }

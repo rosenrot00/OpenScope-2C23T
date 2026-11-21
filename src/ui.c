@@ -187,7 +187,7 @@ typedef struct {
     uint8_t pct;
     uint8_t charging;
     uint8_t full;
-    uint16_t voltage_bucket;
+    uint8_t usb_configured;
 } battery_snapshot_t;
 
 typedef struct {
@@ -537,8 +537,6 @@ static const uint16_t C_CH2 = RGB565(0, 242, 254);
 static const uint16_t C_DMM = RGB565(52, 211, 153);
 static const uint16_t C_SCOPE = RGB565(56, 189, 248);
 static const uint16_t C_GEN = RGB565(192, 132, 252);
-static const uint16_t C_BATT = RGB565(52, 211, 153);
-static const uint16_t C_BATT_FULL = RGB565(52, 211, 153);
 
 // Modern UI palette (multimeter, menu, settings, scope).
 static const uint16_t D_BG = RGB565(11, 14, 19);
@@ -822,26 +820,6 @@ static uint16_t mode_accent(void) {
     return C_DMM;
 }
 
-static void format_percent(char out[5]) {
-    uint8_t pct = battery_percent();
-    if (pct >= 100u) {
-        out[0] = '1';
-        out[1] = '0';
-        out[2] = '0';
-        out[3] = '%';
-        out[4] = 0;
-    } else if (pct >= 10u) {
-        out[0] = (char)('0' + pct / 10u);
-        out[1] = (char)('0' + pct % 10u);
-        out[2] = '%';
-        out[3] = 0;
-    } else {
-        out[0] = (char)('0' + pct);
-        out[1] = '%';
-        out[2] = 0;
-    }
-}
-
 static void format_u8_2(uint8_t value, char out[3]) {
     if (value > 99u) {
         value = 99u;
@@ -859,23 +837,6 @@ static void format_u16_3(uint16_t value, char out[4]) {
     out[1] = (char)('0' + (value / 10u) % 10u);
     out[2] = (char)('0' + value % 10u);
     out[3] = 0;
-}
-
-static void format_battery_voltage(char out[6]) {
-    uint16_t mv = battery_millivolts();
-    uint16_t whole = (uint16_t)(mv / 1000u);
-    uint16_t frac = (uint16_t)((mv % 1000u + 5u) / 10u);
-    if (frac >= 100u) {
-        whole = (uint16_t)(whole + 1u);
-        frac = 0;
-    }
-
-    out[0] = (char)('0' + whole);
-    out[1] = '.';
-    out[2] = (char)('0' + frac / 10u);
-    out[3] = (char)('0' + frac % 10u);
-    out[4] = 'V';
-    out[5] = 0;
 }
 
 static uint32_t gen_freq_unit_multiplier(uint8_t unit) {
@@ -992,150 +953,33 @@ static uint8_t battery_low_alert(void) {
     return 0;
 }
 
-static uint16_t battery_alert_color(uint16_t normal) {
-    if (!battery_low_alert()) {
-        return normal;
-    }
-    return ui.battery_blink_on ? C_WARN : C_MUTED;
-}
-
-static uint16_t battery_voltage_bucket(void) {
-    return (uint16_t)((battery_millivolts() + 25u) / 50u);
-}
-
 static void battery_snapshot_store(void) {
     battery_snapshot.valid = 1;
     battery_snapshot.pct = battery_percent();
     battery_snapshot.charging = battery_is_charging();
     battery_snapshot.full = battery_display_full();
-    battery_snapshot.voltage_bucket = battery_voltage_bucket();
+    battery_snapshot.usb_configured = usb_cdc_is_configured();
 }
 
 static uint8_t battery_snapshot_changed(void) {
     uint8_t pct = battery_percent();
     uint8_t charging = battery_is_charging();
     uint8_t full = battery_display_full();
-    uint16_t voltage_bucket = battery_voltage_bucket();
+    uint8_t usb_configured = usb_cdc_is_configured();
 
     if (!battery_snapshot.valid ||
         pct != battery_snapshot.pct ||
         charging != battery_snapshot.charging ||
         full != battery_snapshot.full ||
-        voltage_bucket != battery_snapshot.voltage_bucket) {
+        usb_configured != battery_snapshot.usb_configured) {
         battery_snapshot.valid = 1;
         battery_snapshot.pct = pct;
         battery_snapshot.charging = charging;
         battery_snapshot.full = full;
-        battery_snapshot.voltage_bucket = voltage_bucket;
+        battery_snapshot.usb_configured = usb_configured;
         return 1;
     }
     return 0;
-}
-
-static void draw_charge_bolt(uint16_t x, uint16_t y, uint16_t color) {
-    static const uint8_t row_x[12] = {3, 3, 2, 2, 1, 1, 0, 3, 2, 2, 1, 0};
-    static const uint8_t row_w[12] = {4, 4, 4, 4, 4, 7, 8, 5, 4, 4, 3, 2};
-
-    for (uint8_t row = 0; row < 12u; ++row) {
-        lcd_rect((uint16_t)(x + row_x[row]), (uint16_t)(y + row), row_w[row], 1, color);
-    }
-}
-
-static void draw_battery(uint16_t x, uint16_t y, uint16_t bg) {
-    uint8_t pct = battery_percent();
-    uint8_t low = battery_low_alert();
-    uint8_t alert_on = (uint8_t)(!low || ui.battery_blink_on);
-    uint16_t fill = battery_display_full() ? 20u : (uint16_t)((uint32_t)pct * 20u / 100u);
-    uint16_t frame_color = low ? (alert_on ? C_WARN : C_MUTED) : C_BATT;
-    uint16_t fill_color = battery_display_full() ? C_BATT_FULL : (low ? C_WARN : C_BATT);
-
-    lcd_rect(x, (uint16_t)(y - 5u), 40, 22, bg);
-    lcd_frame(x, y, 24, 10, frame_color);
-    lcd_rect((uint16_t)(x + 24), (uint16_t)(y + 3), 2, 4, frame_color);
-    if (fill && alert_on) {
-        lcd_rect((uint16_t)(x + 2), (uint16_t)(y + 2), fill, 6, fill_color);
-    }
-    if (battery_charge_indicator_visible()) {
-        draw_charge_bolt((uint16_t)(x + 30u), y, C_BATT_FULL);
-    }
-}
-
-static void draw_header_icon(uint16_t x, uint16_t y, const char *text, uint16_t color, uint16_t bg) {
-    lcd_frame(x, y, 26, 10, color);
-    lcd_text((uint16_t)(x + 4u), (uint16_t)(y + 1u), text, color, bg, 1);
-}
-
-static void draw_all_active_status_icons(uint16_t start_x, uint16_t y, uint16_t bg) {
-    uint16_t current_x = start_x;
-
-    uint8_t gen_active = (uint8_t)(gen_running || gen_output_applied);
-    if (gen_active) {
-        draw_header_icon(current_x, y, "GEN", C_GEN, bg);
-        current_x -= 30u;
-        
-        if (gen_running && gen_sweep_mode != 0) {
-            draw_header_icon(current_x, y, "SWP", C_GEN, bg);
-            current_x -= 30u;
-        }
-
-        if (gen_running && gen_fm_mode != 0) {
-            draw_header_icon(current_x, y, "FM ", C_GEN, bg);
-            current_x -= 30u;
-        }
-    }
-
-    if (scope_math_mode) {
-        draw_header_icon(current_x, y, "MAT", C_GEN, bg); 
-        current_x -= 30u;
-    }
-
-    if (scope_fft_src == 1u || scope_fft_src == 2u) {
-        draw_header_icon(current_x, y, "FFT", C_GEN, bg);
-        current_x -= 30u;
-    } else if (scope_fft_src == 3u) {
-        draw_header_icon(current_x, y, "X-Y", C_GEN, bg);
-        current_x -= 30u;
-    } else if (scope_fft_src == 4u) {
-        draw_header_icon(current_x, y, "BOD", C_GEN, bg);
-        current_x -= 30u;
-    }
-
-    if (current_x >= 134u) {
-        uint16_t clear_width = (uint16_t)(current_x - 134u + 26u);
-        // battery text territory
-        if (134u + clear_width > 250u) {
-            clear_width = 250u - 134u;
-        }
-        lcd_rect(134, y, clear_width, 10, bg);
-    }
-}
-
-static void draw_battery_status_header(void) {
-    char pct[5];
-    char volts[6];
-
-    format_percent(pct);
-    format_battery_voltage(volts);
-
-    // dynamic renderer starting at the safe rightmost coordinate (224)
-    draw_all_active_status_icons(224, 7, C_TOP);
-    
-    lcd_rect(252, 4, 33, 21, C_TOP);
-    lcd_text(254, 5, pct, battery_alert_color(C_TEXT), C_TOP, 1);
-    lcd_text(254, 16, volts, battery_alert_color(C_MUTED), C_TOP, 1);
-    draw_battery(280, 7, C_TOP);
-}
-
-static void draw_battery_status_overlay(uint16_t bg) {
-    char pct[5];
-
-    format_percent(pct);
-
-    draw_all_active_status_icons(224, 7, bg);
-    
-    lcd_rect(252, 5, 68, 15, bg);
-    lcd_text(254, 9, pct, battery_alert_color(C_TEXT), bg, 1);
-    draw_battery(280, 7, bg);
 }
 
 static const char *fw_update_status_text(const fw_update_status_t *status) {
@@ -1613,8 +1457,7 @@ static const char *scope_trigger_source_label(void) {
 static const char *scope_trigger_level_label(void) {
     static char label[11];
     uint8_t idx = scope_trigger_source_index();
-    int32_t mv = ((int32_t)ui.scope_trigger_level - 128) *
-                 (int32_t)scope_vdiv_mv_for_channel(idx) * 8 / 255;
+    int32_t mv = scope_raw_delta_mv(idx, ui.scope_trigger_level);
 
     scope_format_signed_mv(label, mv);
     return label;
@@ -3993,10 +3836,6 @@ static void dmm_draw_status_bar(void) {
     ui_draw_status_bar("Multimeter", D_ACCENT);
 }
 
-static uint8_t dmm_auto_range_display(void) {
-    return ui.auto_range || ui.dmm_mode == DMM_MODE_AUTO;
-}
-
 static uint16_t dmm_value_color(uint8_t warning) {
     if (warning >= 2u) {
         return D_RED_TEXT;
@@ -4029,14 +3868,6 @@ static void dmm_draw_card_header(uint16_t card_color, uint16_t title_color, uint
     if (dmm_rel_active) {
         dmm_draw_pill(right, DMM_CARD_Y + 8, "REL \xCE\x94", D_ACCENT, D_BG, card_color, &right);
     }
-    if (ui.dmm_mode == DMM_MODE_AUTO) {
-        // The title already says Auto Detect.
-    } else if (dmm_auto_range_display()) {
-        dmm_draw_pill(right, DMM_CARD_Y + 8, "AUTO", D_ACCENT_TINT, D_ACCENT, card_color, &right);
-    } else {
-        dmm_draw_pill(right, DMM_CARD_Y + 8, "MANUAL", D_TRACK, D_SUB, card_color, &right);
-    }
-
     if (warning) {
         // A solid tag, not a frame: frames are what dialogs look like.
         const char *label = warning >= 2u ? "HIGH VOLTAGE" : "CAUTION";
@@ -4074,6 +3905,25 @@ static void dmm_bar_label(char *out, uint8_t size, const char *sign, int32_t fs,
     }
 }
 
+static uint16_t dmm_bar_length(uint32_t magnitude, uint32_t full_scale, uint16_t width) {
+    if (!full_scale) {
+        return 0;
+    }
+    if (magnitude >= full_scale) {
+        return width;
+    }
+    // Reduce the 140/280-pixel span against the power-of-ten range first.
+    // Even at four decimals the remaining product then fits in 32 bits.
+    uint32_t divisor = full_scale;
+    uint32_t factor = width;
+    while (factor) {
+        uint32_t remainder = divisor % factor;
+        divisor = factor;
+        factor = remainder;
+    }
+    return (uint16_t)(magnitude * (width / divisor) / (full_scale / divisor));
+}
+
 // Bar graph of the reading against the meter's current range. Positive
 // readings fill from the left on a 0..range axis, negative ones from the
 // right on a -range..0 axis. In REL the bar is centred on zero.
@@ -4093,7 +3943,7 @@ static void dmm_draw_bar(const char *value, const char *unit, uint16_t card_colo
 
     if (dmm_rel_active && !dmm_hold_active) {
         uint16_t half = DMM_IN_W / 2u;
-        uint16_t len = (uint16_t)(mag >= fs ? half : (uint32_t)mag * half / (uint32_t)fs);
+        uint16_t len = dmm_bar_length((uint32_t)mag, (uint32_t)fs, half);
         if (len) {
             gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + half - len) : (uint16_t)(DMM_IN_X + half),
                            BAR_Y, len, 6, len < 6u ? 0u : 3u, fill_color, D_TRACK);
@@ -4110,7 +3960,7 @@ static void dmm_draw_bar(const char *value, const char *unit, uint16_t card_colo
     }
 
     {
-        uint16_t len = (uint16_t)(mag >= fs ? DMM_IN_W : (uint32_t)mag * DMM_IN_W / (uint32_t)fs);
+        uint16_t len = dmm_bar_length((uint32_t)mag, (uint32_t)fs, DMM_IN_W);
         if (len) {
             gfx_round_rect(v < 0 ? (uint16_t)(DMM_IN_X + DMM_IN_W - len) : DMM_IN_X, BAR_Y, len, 6,
                            len < 6u ? 0u : 3u, fill_color, D_TRACK);
@@ -6054,11 +5904,8 @@ static void draw_scope_trigger_line(uint16_t gx, uint16_t gy, uint16_t gw, uint1
     int16_t y;
     uint8_t src = scope_trigger_source_index();
     uint16_t color = ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE ? C_WARN : scope_channel_color((uint8_t)(src + 1u));
-    char level[11];
-    char edge[2] = {ui.scope_trigger_edge ? 'F' : 'R', 0};
-    int32_t mv = scope_raw_delta_mv(src, ui.scope_trigger_level);
+    const char *level = scope_trigger_level_label();
     int16_t center;
-    int16_t delta;
     int16_t amp = ui.chrome_visible ? 48 : 64;
 
     if (ui.scope_display == SCOPE_DISPLAY_XY ||
@@ -6066,17 +5913,11 @@ static void draw_scope_trigger_line(uint16_t gx, uint16_t gy, uint16_t gw, uint1
         return;
     }
     center = scope_channel_center(scope_channel_base_center_for(src), src);
-    delta = (int16_t)ui.scope_trigger_level - 128;
-    y = (int16_t)(center - (delta * amp) / 96);
-    if (y < (int16_t)(gy + 1u)) {
-        y = (int16_t)(gy + 1u);
-    } else if (y > (int16_t)(gy + gh - 2u)) {
-        y = (int16_t)(gy + gh - 2u);
-    }
+    y = scope_scaled_sample_y(src, ui.scope_trigger_level, center, amp,
+                              (int16_t)(gy + 1u), (int16_t)(gy + gh - 2u));
     for (uint16_t x = (uint16_t)(gx + 1u); x < (uint16_t)(gx + gw - 1u); x = (uint16_t)(x + 8u)) {
         lcd_rect(x, (uint16_t)y, 5, 1, color);
     }
-    scope_format_signed_mv(level, mv);
     {
         char pretty[16];
         const char *icon = ui.scope_trigger_edge ? ICON_EDGE_FALL_SM : ICON_EDGE_RISE_SM;
@@ -6092,7 +5933,6 @@ static void draw_scope_trigger_line(uint16_t gx, uint16_t gy, uint16_t gw, uint1
         gfx_text((int16_t)(px + 6), (int16_t)(py + 2), &font_icons, icon, color, fill);
         gfx_text((int16_t)(px + 21), (int16_t)(py + 1), &font_small, pretty, color, fill);
     }
-    (void)edge;
 }
 
 #if SCOPE_UI_SAFE_STUB
@@ -7611,12 +7451,10 @@ static void ui_draw_battery_status_scene(void) {
         ui_draw_status_bar("Settings", D_SETTINGS);
     } else if (ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE) {
         dmm_draw_status_bar();
-    } else if (ui.chrome_visible) {
-        draw_battery_status_header();
     } else if (ui.mode == UI_MODE_SCOPE) {
         ui_draw_status_bar("Oscilloscope", D_SCOPE);
     } else {
-        draw_battery_status_overlay(C_BG);
+        ui_draw_status_bar("Signal Generator", D_GEN);
     }
 }
 
