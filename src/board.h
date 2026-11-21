@@ -33,6 +33,8 @@ void gpio_config_mask(uint32_t base, uint16_t mask, uint8_t cfg);
 void load_counter_init(void);
 uint32_t load_counter_read(void);
 uint32_t load_counter_elapsed(uint32_t start, uint32_t end);
+// Free-running 32-bit processor cycles, independent of the SysTick load meter.
+uint32_t board_cycle_counter_read(void);
 
 void board_init(void);
 void power_key_exti_init(void);

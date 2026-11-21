@@ -71,6 +71,10 @@ void gpio_config_mask(uint32_t base, uint16_t mask, uint8_t cfg) {
 void board_init(void) {
     REG32(SCB_VTOR) = APP_BASE_ADDR;
 
+    REG32(0xE000EDFCu) |= 1u << 24; // DEMCR.TRCENA
+    REG32(0xE0001004u) = 0; // DWT.CYCCNT
+    REG32(0xE0001000u) |= 1u; // DWT.CTRL.CYCCNTENA
+
     RCC_APB2ENR |= (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 6);
     RCC_AHBENR |= (1u << 8);
 
@@ -91,6 +95,10 @@ void board_init(void) {
 
     gpio_config_mask(GPIOD_BASE, 1u << 6, 0x1); // PD6 LCD reset
     gpio_set(GPIOD_BASE, 1u << 6);
+}
+
+uint32_t board_cycle_counter_read(void) {
+    return REG32(0xE0001004u);
 }
 
 void load_counter_init(void) {

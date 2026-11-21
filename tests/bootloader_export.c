@@ -25,12 +25,18 @@ static uint8_t update_busy;
 static unsigned writes;
 static unsigned reads;
 static unsigned fail_write;
+static unsigned fail_read;
 static uint32_t corrupt_addr;
 static uint8_t corrupt_pending;
 static uint8_t last_progress;
 static uint8_t saw_completion;
 static uint32_t remote_freq;
 static unsigned remote_freq_calls;
+static uint32_t clock_ticks;
+static const uint8_t *async_source;
+static uint32_t async_address;
+static unsigned async_steps;
+static unsigned async_starts;
 
 uint8_t bootloader_readable(void) { return readable; }
 uint8_t bootloader_vectors_valid(const uint8_t *data) { assert(data == source_data); return valid_vectors; }
@@ -47,6 +53,7 @@ void w25q_init(void) {}
 uint32_t w25q_capacity_bytes(void) { return sizeof(disk); }
 uint8_t w25q_read(uint32_t addr, uint8_t *dst, uint16_t len) {
     ++reads;
+    if (reads == fail_read) return 0;
     assert(addr <= sizeof(disk) && len <= sizeof(disk) - addr);
     memcpy(dst, disk + addr, len);
     if (corrupt_pending && addr == corrupt_addr) { dst[0] ^= 1u; corrupt_pending = 0; }
@@ -58,6 +65,22 @@ uint8_t w25q_write_sector(uint32_t addr, const uint8_t *src) {
     memcpy(disk + addr, src, MSC_SECTOR_SIZE);
     return 1;
 }
+uint8_t w25q_write_sector_start(uint32_t addr, const uint8_t *src) {
+    if (async_steps) return 0;
+    assert(!(addr % MSC_SECTOR_SIZE) && src);
+    async_source = src;
+    async_address = addr;
+    async_steps = 4;
+    ++async_starts;
+    return 1;
+}
+w25q_write_status_t w25q_write_sector_poll(void) {
+    assert(async_steps);
+    if (--async_steps) return W25Q_WRITE_BUSY;
+    return w25q_write_sector(async_address, async_source) ? W25Q_WRITE_DONE : W25Q_WRITE_ERROR;
+}
+uint8_t w25q_write_sector_busy(void) { return async_steps != 0; }
+uint32_t board_cycle_counter_read(void) { return clock_ticks; }
 void delay_ms(uint32_t ms) { (void)ms; }
 void fw_update_status(fw_update_status_t *status) {
     memset(status, 0, sizeof(*status));
@@ -105,11 +128,15 @@ static raw_fat_volume_t setup(uint16_t sector_bytes, uint8_t type, uint8_t spc) 
     memset(registers16, 0, sizeof(registers16));
     usb_ready = usb_configured = 0;
     msc_state = MSC_IDLE;
+    msc_out_pending = raw_flush_pending = 0;
+    usb_suspended = 0;
+    async_steps = async_starts = 0;
+    clock_ticks = 0;
     raw_write_loaded = raw_write_dirty = raw_write_failed = 0;
     raw_update_scan_pending = raw_update_streaming = msc_update_candidate = 0;
     readable = valid_vectors = 1;
     update_busy = corrupt_pending = saw_completion = last_progress = 0;
-    writes = fail_write = 0;
+    writes = fail_write = fail_read = 0;
     for (unsigned i = 0; i < sizeof(source_data); ++i) source_data[i] = (uint8_t)(i * 31u);
     uint32_t clusters = type == FAT_TYPE_12 ? 600u : (type == FAT_TYPE_16 ? 4200u : 66000u);
     // FAT32 uses a small synthetic BPB but enough clusters to select the type.
@@ -391,6 +418,169 @@ static void test_cdc_command_dispatch(void) {
     puts("USB CDC deferred dispatch, numeric bounds and whole-line overflow checks passed");
 }
 
+static void msc_test_setup(void) {
+    (void)setup(512, FAT_TYPE_12, 1);
+    usb_ready = usb_configured = 1;
+    usb_suspended = 0;
+    usb_last_frame = 0;
+    usb_last_frame_ticks = 0;
+    msc_unit_attention = 0;
+    msc_disk_sectors = sizeof(disk) / MSC_SECTOR_SIZE;
+    msc_abort_transfer();
+    REG32(NVIC_ISER0) = USB_IRQ_MASK;
+}
+
+static void msc_test_packet(const uint8_t *data, uint16_t len) {
+    unsigned before_reads = reads;
+    unsigned before_writes = writes;
+    unsigned before_starts = async_starts;
+    assert(!msc_out_pending);
+    pma_write(USB_EP1_RX, data, len);
+    USB_PMA16(1u * 8u + 6u) = len;
+    ep1_out();
+    assert(msc_out_pending);
+    assert(reads == before_reads && writes == before_writes && async_starts == before_starts);
+}
+
+static void msc_test_cbw(uint8_t op, uint32_t lba, uint16_t blocks, uint32_t tag) {
+    uint8_t cbw[31] = {0};
+    put_le32(cbw, 0x43425355u);
+    put_le32(cbw + 4, tag);
+    put_le32(cbw + 8, op == 0x12 ? 36u : (uint32_t)blocks * MSC_SECTOR_SIZE);
+    cbw[12] = op == 0x2A ? 0 : 0x80;
+    cbw[14] = 10;
+    cbw[15] = op;
+    put_be32(cbw + 17, lba);
+    cbw[22] = (uint8_t)(blocks >> 8);
+    cbw[23] = (uint8_t)blocks;
+    msc_test_packet(cbw, sizeof(cbw));
+}
+
+static void msc_test_write_data(uint8_t value) {
+    uint8_t packet[64];
+    memset(packet, value, sizeof(packet));
+    for (unsigned i = 0; i < MSC_SECTOR_SIZE / sizeof(packet); ++i) {
+        msc_test_packet(packet, sizeof(packet));
+        usb_msc_poll();
+        assert(!msc_out_pending);
+    }
+}
+
+static void test_deferred_msc_write(void) {
+    msc_test_setup();
+    msc_test_cbw(0x2A, 20, 1, 0x12345678u);
+    assert(msc_state == MSC_IDLE);
+    usb_msc_poll();
+    assert(msc_state == MSC_DISCARD_OUT_DATA);
+    msc_test_write_data(0x5A);
+    assert(raw_flush_pending && async_starts == 1 && !writes);
+    assert(USB_PMA16(1u * 8u + 2u) == 0); // No successful CSW while flash is busy.
+    assert(usb_msc_save_screenshot() == SCREENSHOT_SAVE_BUSY);
+    for (unsigned i = 0; i < 3; ++i) {
+        usb_msc_poll(); // Each returns after one mock flash step.
+        assert(raw_flush_pending && !writes && !disk[20u * MSC_SECTOR_SIZE]);
+    }
+    usb_msc_poll();
+    assert(!raw_flush_pending && writes == 1 && msc_state == MSC_IDLE);
+    uint8_t csw[13];
+    pma_read(USB_EP1_TX, csw, sizeof(csw));
+    assert(le32(csw) == 0x53425355u && le32(csw + 4) == 0x12345678u && csw[12] == MSC_CSW_OK);
+    for (unsigned i = 0; i < MSC_SECTOR_SIZE; ++i) assert(disk[20u * MSC_SECTOR_SIZE + i] == 0x5A);
+
+    unsigned previous_writes = writes;
+    unsigned previous_starts = async_starts;
+    raw_update_scan_pending = 0;
+    msc_test_cbw(0x2A, 20, 1, 2);
+    usb_msc_poll();
+    msc_test_write_data(0x5A);
+    assert(!raw_flush_pending && writes == previous_writes && async_starts == previous_starts);
+    assert(!raw_update_scan_pending); // Identical host metadata needs neither erase nor rescan.
+}
+
+static void test_msc_write_failure(void) {
+    msc_test_setup();
+    fail_write = 1;
+    msc_test_cbw(0x2A, 20, 1, 3);
+    usb_msc_poll();
+    msc_test_write_data(0x3C);
+    while (raw_flush_pending) usb_msc_poll();
+    assert(msc_discard_status == MSC_CSW_FAIL && msc_sense_key == 3 && msc_sense_asc == 0x0C);
+    assert(!raw_update_scan_pending && disk[20u * MSC_SECTOR_SIZE] == 0);
+}
+
+static void test_msc_reset_during_write(void) {
+    msc_test_setup();
+    msc_test_cbw(0x2A, 20, 1, 4);
+    usb_msc_poll();
+    msc_test_write_data(0x77);
+    assert(raw_flush_pending);
+    msc_abort_transfer();
+    msc_test_cbw(0x12, 0, 0, 5);
+    for (unsigned i = 0; i < 3; ++i) {
+        usb_msc_poll();
+        assert(msc_out_pending && raw_flush_pending && msc_tag == 4);
+        assert(raw_write_sector[0] == 0x77 && !writes);
+    }
+    usb_msc_poll();
+    assert(!raw_flush_pending && !msc_out_pending && msc_tag == 5);
+    assert(writes == 1 && disk[20u * MSC_SECTOR_SIZE] == 0x77);
+    assert(USB_PMA16(1u * 8u + 2u) == 36); // New INQUIRY data, not the aborted write's CSW.
+}
+
+static void test_msc_short_packets(void) {
+    msc_test_setup();
+    msc_test_cbw(0x2A, 20, 2, 6);
+    usb_msc_poll();
+    uint8_t packet[63];
+    memset(packet, 0x55, sizeof(packet));
+    uint32_t remaining = 2u * MSC_SECTOR_SIZE;
+    while (remaining) {
+        uint16_t n = remaining < sizeof(packet) ? (uint16_t)remaining : sizeof(packet);
+        msc_test_packet(packet, n);
+        usb_msc_poll();
+        while (raw_flush_pending || msc_out_pending) usb_msc_poll();
+        remaining -= n;
+    }
+    assert(writes == 2 && msc_state == MSC_IDLE);
+    for (unsigned i = 0; i < 2u * MSC_SECTOR_SIZE; ++i) assert(disk[20u * MSC_SECTOR_SIZE + i] == 0x55);
+}
+
+static void test_msc_read_error(void) {
+    msc_test_setup();
+    fail_read = reads + 1u;
+    msc_test_cbw(0x28, 20, 1, 7);
+    usb_msc_poll();
+    assert(msc_state == MSC_SEND_CSW && msc_sense_key == 3 && msc_sense_asc == 0x11);
+    assert(USB_PMA16(1u * 8u + 2u) == 0); // ZLP terminates the failed data phase.
+    ep1_in();
+    uint8_t csw[13];
+    pma_read(USB_EP1_TX, csw, sizeof(csw));
+    assert(csw[12] == MSC_CSW_FAIL && le32(csw + 8) == MSC_SECTOR_SIZE);
+}
+
+static void test_usb_link_activity(void) {
+    msc_test_setup();
+    assert(usb_cdc_is_configured());
+    USB_FNR = 1;
+    clock_ticks = 100;
+    usb_link_poll();
+    clock_ticks += USB_LINK_QUIET_CYCLES;
+    usb_link_poll();
+    assert(usb_configured && !usb_cdc_is_configured());
+    USB_FNR = 2;
+    usb_link_poll();
+    assert(usb_cdc_is_configured()); // Resume without losing SET_CONFIGURATION.
+    usb_suspended = 1;
+    assert(!usb_cdc_is_configured());
+    USB_FNR = 3;
+    usb_link_poll();
+    assert(usb_cdc_is_configured());
+    usb_last_frame_ticks = UINT32_MAX - 100u;
+    clock_ticks = USB_LINK_QUIET_CYCLES;
+    usb_link_poll();
+    assert(!usb_cdc_is_configured()); // Cycle-counter wrap is harmless.
+}
+
 int main(void) {
     test_export(512, FAT_TYPE_12, 1);
     test_export(4096, FAT_TYPE_12, 2);
@@ -401,5 +591,12 @@ int main(void) {
     test_screenshot_failure_reasons();
     test_storage_busy();
     test_cdc_command_dispatch();
+    test_deferred_msc_write();
+    test_msc_write_failure();
+    test_msc_reset_during_write();
+    test_msc_short_packets();
+    test_msc_read_error();
+    test_usb_link_activity();
+    puts("USB MSC: cooperative durable writes, reset ownership, short packets, read errors and link expiry passed");
     puts("bootloader FAT export checks passed (" HW_TARGET_NAME ")");
 }

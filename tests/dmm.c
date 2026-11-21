@@ -13,6 +13,12 @@
 #include "../src/ui.c"
 #include "../src/font.c"
 
+void delay_ms(uint32_t elapsed) { (void)elapsed; }
+void settings_note(const settings_state_t *settings) { (void)settings; }
+void usb_cdc_send_dmm(const char *mode, const char *value, const char *unit, uint8_t valid) {
+    (void)mode; (void)value; (void)unit; (void)valid;
+}
+
 static void make_frame(const char digits[4], unsigned dots, uint8_t prefix,
                        uint8_t flags_b, uint8_t flags_c, uint8_t frame[9]) {
     uint8_t segments[4];
@@ -348,6 +354,70 @@ static void test_temperature_scale_changes_only_with_accepted_reading(void) {
     assert(strcmp(dmm_unit_text(), "DEG") == 0);
 }
 
+static void test_dmm_group_selection(void) {
+    setup(DMM_MODE_AUTO);
+    ui.overlay = UI_OVERLAY_NONE;
+    dmm_step_group(DMM_GROUP_TEST, 1);
+    assert(ui.dmm_mode == DMM_MODE_DIODE);
+    dmm_step_group(DMM_GROUP_TEST, 1);
+    assert(ui.dmm_mode == DMM_MODE_CAP);
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(ui.dmm_mode == DMM_MODE_TEMP);
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(ui.dmm_mode == DMM_MODE_TEMP_F && ui_settings.dmm_mode == DMM_MODE_TEMP);
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(ui.dmm_mode == DMM_MODE_LIVE);
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(ui.dmm_mode == DMM_MODE_TEMP);
+    dmm_step_group(DMM_GROUP_TEST, 1);
+    assert(ui.dmm_mode == DMM_MODE_CAP);
+    dmm_step_group(DMM_GROUP_TEST, -1);
+    assert(ui.dmm_mode == DMM_MODE_DIODE);
+    dmm_step_group(DMM_GROUP_CURRENT, 1);
+    assert(ui.dmm_mode == DMM_MODE_DC_HI_CURR);
+    dmm_step_group(DMM_GROUP_CURRENT, 1);
+    assert(ui.dmm_mode == DMM_MODE_AC_LO_CURR);
+    dmm_step_all_modes(1);
+    assert(ui.dmm_mode == DMM_MODE_DC_LO_CURR);
+    dmm_step_all_modes(1);
+    assert(ui.dmm_mode == DMM_MODE_DCV);
+    dmm_step_all_modes(-1);
+    assert(ui.dmm_mode == DMM_MODE_DC_LO_CURR);
+    dmm_apply_selected_mode(DMM_MODE_AUTO);
+    dmm_step_group(DMM_GROUP_CURRENT, 1);
+    assert(ui.dmm_mode == DMM_MODE_DC_LO_CURR);
+}
+
+static void test_selected_temperature_scale(void) {
+    uint8_t frame[9];
+    reading(DMM_MODE_TEMP, "0238", 8, 0, 0, 0x20, "23.8", "DEG");
+    ui.overlay = UI_OVERLAY_NONE;
+    dmm_hold_active = 1;
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(!dmm_hold_active && dmm_stats.count == 1);
+    assert(!strcmp(dmm_display_value(), "74.8"));
+    assert(!strcmp(dmm_display_unit(), "~F"));
+    assert(!strcmp(dmm_value_text(), "23.8")); // CDC still reports the wire value.
+    assert(!strcmp(dmm_mode_name(), "TEMP"));
+    dmm_toggle_relative();
+    make_frame("0248", 8, 0, 0, 0x20, frame);
+    assert(parse_frame(frame));
+    assert(!strcmp(dmm_display_value(), "1.8000"));
+    dmm_step_group(DMM_GROUP_SENSE, -1);
+    assert(!dmm_rel_active && !strcmp(dmm_display_value(), "24.8"));
+    make_frame("0077", 0, 0, 0, 0x10, frame);
+    assert(parse_frame(frame));
+    assert(!strcmp(dmm_display_value(), "25")); // Do not apply C->F twice.
+    dmm_step_group(DMM_GROUP_SENSE, 1);
+    assert(!strcmp(dmm_display_value(), "77"));
+    make_frame("0040", 1, 0, 0, 0x20, frame);
+    assert(parse_frame(frame));
+    assert(!strcmp(dmm_display_value(), "-40"));
+    make_frame("0018", 1, 0, 0, 0x20, frame);
+    assert(parse_frame(frame));
+    assert(!strcmp(dmm_display_value(), "0")); // -0.4 F rounds to zero.
+}
+
 // The scope ranges have the multimeter's problem and the same cure: one
 // spelling for the host, which has parsed "500M" since before any of this,
 // and one for the eye, which reads "500M" as five hundred megavolts.
@@ -403,6 +473,8 @@ int main(void) {
     test_stock_decoding();
     test_display_units_are_si();
     test_temperature_scale_changes_only_with_accepted_reading();
+    test_dmm_group_selection();
+    test_selected_temperature_scale();
     test_scope_ranges_are_readable();
     test_all_numeric_digits();
     test_status_and_rejected_frames();

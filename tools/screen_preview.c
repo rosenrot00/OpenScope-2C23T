@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef SCREEN_PREVIEW_DIR
+#define SCREEN_PREVIEW_DIR "build/preview"
+#endif
+
 #define __asm__
 #define volatile(...)
 #define dmm_current_mode dmm_wire_mode
@@ -37,8 +41,8 @@ uint8_t arb_file_count(void) { return 0; }
 const char *arb_file_name(uint8_t index) { (void)index; return ""; }
 
 static void save(const char *name) {
-    char path[128];
-    snprintf(path, sizeof(path), "build/preview/%s.ppm", name);
+    char path[sizeof(SCREEN_PREVIEW_DIR) + 64];
+    snprintf(path, sizeof(path), SCREEN_PREVIEW_DIR "/%s.ppm", name);
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); return; }
     fprintf(f, "P6\n%u %u\n255\n", LCD_WIDTH, LCD_HEIGHT);
@@ -71,7 +75,11 @@ static void feed(uint8_t mode, const char digits[4], unsigned dots, uint8_t pref
 }
 
 static void enter(uint8_t mode) {
-    dmm_wire_mode = ui.dmm_mode = mode;
+    uint8_t choice;
+    uint8_t group = dmm_mode_group(mode, &choice);
+    if (group < DMM_GROUP_COUNT) dmm_group_choice[group] = choice;
+    dmm_wire_mode = dmm_wire_mode_for_ui(mode);
+    ui.dmm_mode = mode;
     ui.mode = UI_MODE_DMM;
     ui.overlay = UI_OVERLAY_NONE;
     ui.auto_range = 1;
@@ -136,11 +144,6 @@ int main(void) {
     enter(DMM_MODE_DCV);
     feed(1, "0003", 8, 0, 0, 2);
     shot("dmm-04-dc-voltage-near-zero");
-
-    enter(DMM_MODE_DCV);
-    ui.auto_range = 0;
-    feed(1, "0503", 4, 0, 0, 2);
-    shot("dmm-05-manual-range");
 
     enter(DMM_MODE_DCV);
     feed(1, "4520", 4, 0, 0, 2);
@@ -213,8 +216,8 @@ int main(void) {
     feed(8, "0238", 8, 0, 0, 0x20);
     shot("dmm-21-temperature-c");
 
-    enter(DMM_MODE_TEMP);
-    feed(8, "0748", 8, 0, 0, 0x10);
+    enter(DMM_MODE_TEMP_F);
+    feed(8, "0238", 8, 0, 0, 0x20);
     shot("dmm-22-temperature-f");
 
     enter(DMM_MODE_AC_HI_CURR);

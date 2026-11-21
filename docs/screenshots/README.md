@@ -8,8 +8,8 @@ Rendered on a PC by the firmware's own drawing code with `make screenshots`: eac
 |---|---|
 | <img src="dmm-01-waiting.png" width="320"/><br/>Waiting for the first reading | <img src="dmm-02-dc-voltage.png" width="320"/><br/>DC voltage with MIN / AVG / MAX |
 | <img src="dmm-03-dc-voltage-negative.png" width="320"/><br/>Negative reading: the bar fills from the right on a −range…0 axis | <img src="dmm-04-dc-voltage-near-zero.png" width="320"/><br/>Near zero on the meter's 1000 V range |
-| <img src="dmm-05-manual-range.png" width="320"/><br/>Manual range | <img src="dmm-06-dc-caution.png" width="320"/><br/>Caution (30–60 V DC) |
-| <img src="dmm-07-ac-high-voltage.png" width="320"/><br/>High voltage (≥ 30 V AC / 60 V DC) | <img src="dmm-08-hold.png" width="320"/><br/>HOLD |
+| <img src="dmm-06-dc-caution.png" width="320"/><br/>Caution (30–60 V DC) | <img src="dmm-07-ac-high-voltage.png" width="320"/><br/>High voltage |
+| <img src="dmm-08-hold.png" width="320"/><br/>HOLD | <img src="dmm-27-low-battery-charging-usb.png" width="320"/><br/>Low battery, charging, USB connected |
 | <img src="dmm-09-auto-detecting.png" width="320"/><br/>Auto Detect before the meter settles | <img src="dmm-10-auto-voltage.png" width="320"/><br/>Auto Detect: voltage |
 | <img src="dmm-11-auto-resistance.png" width="320"/><br/>Auto Detect: resistance | <img src="dmm-12-resistance.png" width="320"/><br/>Resistance |
 | <img src="dmm-13-resistance-open.png" width="320"/><br/>Open circuit (OL) | <img src="dmm-14-rel-positive.png" width="320"/><br/>REL: positive difference, bar centred on zero |
@@ -19,7 +19,6 @@ Rendered on a PC by the firmware's own drawing code with `make screenshots`: eac
 | <img src="dmm-21-temperature-c.png" width="320"/><br/>Temperature °C (no bar) | <img src="dmm-22-temperature-f.png" width="320"/><br/>Temperature °F |
 | <img src="dmm-23-ac-current-high.png" width="320"/><br/>AC current, high jack | <img src="dmm-24-dc-current-low.png" width="320"/><br/>DC current, low jack |
 | <img src="dmm-25-live-idle.png" width="320"/><br/>Live wire: idle | <img src="dmm-26-live-detected.png" width="320"/><br/>Live wire: detected |
-| <img src="dmm-27-low-battery-charging-usb.png" width="320"/><br/>Low battery, charging, USB connected |  |
 
 ## Main menu
 

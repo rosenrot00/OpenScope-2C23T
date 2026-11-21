@@ -134,6 +134,45 @@ static void test_no_manual_range_badge(void) {
     assert(!memcmp(previous_frame, frame_buffer, sizeof(previous_frame)));
 }
 
+static void test_dmm_softkeys(void) {
+    enum { TEST_X = 9 + 77, CENTER_Y = DMM_KEYS_Y + 13 };
+    ui.mode = UI_MODE_DMM;
+    ui.overlay = UI_OVERLAY_NONE;
+    dmm_valid = 0;
+    dmm_hold_active = dmm_rel_active = 0;
+    dmm_group_choice[DMM_GROUP_TEST] = 0;
+    ui.dmm_mode = DMM_MODE_DIODE;
+    render(UI_RENDER_FULL);
+    assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + TEST_X + 35] == D_ACCENT);
+    assert(frame_buffer[CENTER_Y * LCD_WIDTH + TEST_X + 41] == D_BG); // Sound mark.
+    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 51] == D_BG); // Outer arc.
+    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 52] == D_BG);
+    assert(frame_buffer[CENTER_Y * LCD_WIDTH + TEST_X + 52] == D_ACCENT); // Gap between arcs.
+    assert(frame_buffer[(CENTER_Y - 4) * LCD_WIDTH + TEST_X + 31] == D_BG); // Diode cathode.
+    ui.dmm_mode = DMM_MODE_CAP;
+    dmm_group_choice[DMM_GROUP_TEST] = 1;
+    render(UI_RENDER_LOCAL_CHANGE);
+    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 33] == D_BG); // Capacitor plate.
+    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 34] == D_BG);
+    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 35] == D_ACCENT); // Gap between plates.
+    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 51] == D_ACCENT);
+    ui.dmm_mode = DMM_MODE_AUTO;
+    render(UI_RENDER_LOCAL_CHANGE);
+    assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + 44] == D_ACCENT);
+    assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + TEST_X + 35] == D_CARD);
+    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 33] == D_SUB);
+    render(UI_RENDER_DMM_READING);
+    assert(!memcmp(previous_frame + (DMM_KEYS_Y - 2) * LCD_WIDTH,
+                   frame_buffer + (DMM_KEYS_Y - 2) * LCD_WIDTH,
+                   (LCD_HEIGHT - DMM_KEYS_Y + 2) * LCD_WIDTH * sizeof(*frame_buffer)));
+
+    ui.dmm_mode = DMM_MODE_ACV;
+    render(UI_RENDER_LOCAL_CHANGE);
+    uint16_t wave_x = 9u + (71u - 19u + gfx_text_width(&font_medium, "V")) / 2u + 6u;
+    assert(frame_buffer[(CENTER_Y + 1) * LCD_WIDTH + wave_x] == D_BG);
+    assert(frame_buffer[(CENTER_Y + 2) * LCD_WIDTH + wave_x] == D_BG); // Two-pixel AC stroke.
+}
+
 static void test_partial_headers(void) {
     for (unsigned mode = UI_MODE_DMM; mode <= UI_MODE_GEN; ++mode) {
         for (uint8_t chrome = 0; chrome < 2; ++chrome) {
@@ -206,6 +245,7 @@ int main(void) {
     test_bar_ratios();
     test_status_snapshot();
     test_no_manual_range_badge();
+    test_dmm_softkeys();
     test_partial_headers();
     test_trigger_labels();
     test_trigger_line_position();

@@ -10,13 +10,13 @@ This firmware is still under active development. Use it at your own risk.
 
 | | | |
 |---|---|---|
-| <img src="docs/screenshots/menu-1.png" width="320" alt="Main menu"/> | <img src="docs/screenshots/dmm-02-dc-voltage.png" width="320" alt="Multimeter: DC voltage"/> | <img src="docs/screenshots/dmm-03-dc-voltage-negative.png" width="320" alt="Multimeter: negative DC voltage"/> |
+| <img src="docs/screenshots/menu-1.png" width="320" alt="Main menu"/> | <img src="docs/screenshots/dmm-02-dc-voltage.png" width="320" alt="Multimeter: DC voltage"/> | <img src="docs/screenshots/dmm-20-capacitance.png" width="320" alt="Multimeter: capacitance"/> |
 | <img src="docs/screenshots/dmm-07-ac-high-voltage.png" width="320" alt="Multimeter: high voltage"/> | <img src="docs/screenshots/dmm-17-continuity-closed.png" width="320" alt="Multimeter: continuity closed"/> | <img src="docs/screenshots/dmm-14-rel-positive.png" width="320" alt="Multimeter: relative mode"/> |
 | <img src="docs/screenshots/scope-1.png" width="320" alt="Oscilloscope"/> | <img src="docs/screenshots/scope-row-trigger.png" width="320" alt="Oscilloscope: trigger settings"/> | <img src="docs/screenshots/scope-math-menu.png" width="320" alt="Oscilloscope: Analytical / Math menu"/> |
 | <img src="docs/screenshots/scope-bode.png" width="320" alt="Oscilloscope: Bode plot"/> | <img src="docs/screenshots/gen-1.png" width="320" alt="Signal generator"/> | <img src="docs/screenshots/gen-sweep-menu.png" width="320" alt="Signal generator: sweep and modulation"/> |
-| <img src="docs/screenshots/settings-1.png" width="320" alt="Settings"/> | <img src="docs/screenshots/settings-reset-confirm.png" width="320" alt="Settings: factory reset dialog"/> | <img src="docs/screenshots/dmm-26-live-detected.png" width="320" alt="Multimeter: live wire detected"/> |
+| <img src="docs/screenshots/settings-1.png" width="320" alt="Settings"/> | <img src="docs/screenshots/settings-reset-confirm.png" width="320" alt="Settings: factory reset dialog"/> | <img src="docs/screenshots/dmm-22-temperature-f.png" width="320" alt="Multimeter: temperature in Fahrenheit"/> |
 
-These images are rendered on a PC by the firmware's own drawing code (`make screenshots`), so they match the 320×240 screen pixel for pixel, shown at 2× without smoothing. Signals and readings in them are synthetic test inputs. Every state of every screen (waiting, negative readings, OL, REL, AUTO detect, warnings and more) is listed in [`docs/screenshots`](docs/screenshots/README.md).
+These images come from the firmware's own 320×240 renderer (`make screenshots`), using synthetic readings and signals. More views and measurement states are available in the [full screenshot gallery](docs/screenshots/README.md).
 
 ## What This Adds
 
@@ -44,7 +44,7 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 Every tool uses one visual language: a status bar (tool name, USB, charging and battery), rounded cards, and rows of rounded chips for the settings you change with the arrow keys. The selected chip or row is outlined in the tool's colour: blue for the multimeter, green for the oscilloscope, violet for the signal generator, and amber for settings.
 
 - **Main menu (`MENU`):** a 2×2 grid. Use the arrow keys (left/right and up/down) to choose and `‖▶` to open.
-- **Multimeter:** the four group keys (V/Ω, Test, Sense, Current) are shown as pills at the bottom. HOLD, REL and AUTO/MANUAL appear as tags on the reading card. Readings above 30 V AC or 60 V DC turn red and get a solid HIGH VOLTAGE tag (30–60 V DC: amber CAUTION). An open circuit or overload reads OL.
+- **Multimeter:** the four softkeys show the last selected measurement in each group, with the active group highlighted. Press its key again to cycle within the group. The temperature/live-wire key cycles through °C, °F and LIVE. HOLD and REL appear as tags on the reading card. Readings above 30 V AC or 60 V DC turn red and get a solid HIGH VOLTAGE tag (30–60 V DC: amber CAUTION). An open circuit or overload reads OL.
 - **Bar graph:** the meter shows four digits, so its decimal point marks its current range ("12.35" V is on the 0–100 V range). The bar shows the reading against that range and only rescales when the meter changes range. Negative readings fill from the right on a −range…0 axis. In REL the bar is centred on zero and spans ±range. Temperature has no bar.
 - **Continuity:** in the Diode / Continuity mode the resistance stays the big number; below 50 Ω it turns green and a small CLOSED tag appears.
 - **Live wire:** put the red lead in the V jack and touch the probe tip to the wire. It is a single-probe phase check, so confirm with a voltage measurement.
@@ -118,8 +118,8 @@ make release
 
 Output files:
 
-- `dist/F2C23T-v2026.11.5-08008000.bin`
-- `dist/F2C23T-v2026.11.5-HW4.0-08007000.bin`
+- `dist/F2C23T-v2026.11.6-08008000.bin`
+- `dist/F2C23T-v2026.11.6-HW4.0-08007000.bin`
 
 If no Rust toolchain provides `rust-lld`, point the build at the system LLVM linker:
 
@@ -152,8 +152,8 @@ This function never erases or programs the MCU's internal flash and never change
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.11.5-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.11.5-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.11.6-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.11.6-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 When upgrading to v2026.11.4, saved settings and user calibration from older OpenScope builds are not carried over. The new settings signature prevents data from another firmware from being interpreted as OpenScope settings.
 

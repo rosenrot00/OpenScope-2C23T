@@ -38,7 +38,7 @@
 #define GEN_FREQ_UNIT_COUNT 3u
 #define GEN_DUTY_EDIT_DIGITS 3u
 #define GEN_AMP_EDIT_DIGITS 2u
-#define FIRMWARE_VERSION_TEXT "v2026.11.5"
+#define FIRMWARE_VERSION_TEXT "v2026.11.6"
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1
 #endif
@@ -48,10 +48,11 @@
 #define SCOPE_X_DIVS 12u
 #define SCOPE_Y_DIVS 8u
 #define SCOPE_TIMEBASE_DEFAULT 4u
-#define SCOPE_AUTO_TIMEBASE_MAX 17u
+#define SCOPE_AUTO_TIMEBASE_MAX 16u
+#define SCOPE_AUTO_VDIV_START 1u
+#define SCOPE_AUTO_STABLE_FRAMES 2u
 #define SCOPE_AUTO_HALFPERIOD_MIN 5u
 #define SCOPE_AUTO_HALFPERIOD_MAX 60u
-#define SCOPE_AUTO_Y_TARGET_MIN 72u
 #define SCOPE_AUTO_Y_TARGET_MAX 176u
 #define SCOPE_AUTO_Y_CLIP_LOW 8u
 #define SCOPE_AUTO_Y_CLIP_HIGH 247u
@@ -331,8 +332,9 @@ static uint8_t scope_auto_time_active;
 static uint8_t scope_auto_time_mask;
 static uint8_t scope_auto_time_steps_left;
 static uint8_t scope_auto_channel_mask;
-static uint8_t scope_auto_channel_steps_left;
-static uint8_t scope_auto_channel_second_pass;
+static uint8_t scope_auto_channel_steps_left[2];
+static uint8_t scope_auto_channel_stable_count[2];
+static uint16_t scope_auto_last_frame;
 static uint8_t scope_cursor_x[2] = {80, 176};
 static uint8_t scope_cursor_y[2] = {86, 170};
 static int16_t scope_cursor_time_value[2] = {-48, 48};
@@ -576,8 +578,28 @@ enum {
     DMM_MODE_DC_HI_CURR,
     DMM_MODE_AC_LO_CURR,
     DMM_MODE_DC_LO_CURR,
+    DMM_MODE_TEMP_F, // UI only; the meter IC has one temperature command.
     DMM_MODE_COUNT,
 };
+
+enum {
+    DMM_GROUP_VOLTAGE,
+    DMM_GROUP_TEST,
+    DMM_GROUP_SENSE,
+    DMM_GROUP_CURRENT,
+    DMM_GROUP_COUNT,
+};
+
+static const struct {
+    uint8_t count;
+    uint8_t modes[4];
+} dmm_groups[DMM_GROUP_COUNT] = {
+    {3, {DMM_MODE_DCV, DMM_MODE_ACV, DMM_MODE_RES}},
+    {2, {DMM_MODE_DIODE, DMM_MODE_CAP}},
+    {3, {DMM_MODE_TEMP, DMM_MODE_TEMP_F, DMM_MODE_LIVE}},
+    {4, {DMM_MODE_AC_HI_CURR, DMM_MODE_DC_HI_CURR, DMM_MODE_AC_LO_CURR, DMM_MODE_DC_LO_CURR}},
+};
+static uint8_t dmm_group_choice[DMM_GROUP_COUNT] = {0, 0, 0, 1};
 
 enum {
     GEN_PARAM_WAVE,
@@ -623,13 +645,6 @@ enum {
     SCOPE_MEASURE_COUNT,
 };
 
-static const char *const dmm_values[] = {
-    "12.346", "12.346", "0.218", "1.204", "0.624", "0.047",
-    "LIVE", "0.000", "23.8", "0.000", "0.000", "0.000", "0.000",
-};
-static const char *const dmm_units[] = {
-    "V", "V", "V", "KOHM", "V", "UF", "", "OHM", "DEG", "A", "A", "MA", "MA",
-};
 static const uint32_t scope_timebase_unit_ns[] = {
     5u, 10u, 20u, 50u, 100u, 200u, 500u,
     1000u, 2000u, 5000u, 10000u, 20000u, 50000u,
@@ -751,7 +766,10 @@ static const int8_t scope_sine_lut[64] = {
 };
 
 static void dmm_pause_for_menu_overlay(void);
-static void dmm_apply_selected_mode(void);
+static void dmm_apply_selected_mode(uint8_t mode);
+static uint8_t dmm_text_decimals(const char *text);
+static int32_t dmm_pow10(uint8_t n);
+static void dmm_format_fixed(int32_t value, uint8_t stored, uint8_t shown, uint8_t trim, char out[12]);
 static void gen_prepare_state(void);
 static uint32_t gen_get_current_sweep_freq(void);
 static void gen_apply(void);
@@ -786,6 +804,8 @@ static int8_t scope_clamp_channel_pos(uint8_t idx, int16_t pos);
 static uint32_t scope_estimate_freq_hz_window(uint8_t idx, uint16_t start, uint16_t end, uint8_t min_raw, uint8_t max_raw);
 static void scope_auto_zero_begin(uint8_t mask);
 static void scope_auto_zero_service(void);
+static void scope_auto_cancel(void);
+static void scope_auto_timeout_service(void);
 static void scope_auto_setup_request(uint8_t mask);
 static uint8_t scope_auto_time_service(void);
 static void scope_auto_channel_request(uint8_t mask);
@@ -1008,30 +1028,25 @@ static const char *fw_update_status_text(const fw_update_status_t *status) {
 static void draw_fw_update_overlay(uint16_t bg);
 static void draw_screenshot_overlay(uint16_t bg);
 
-static uint8_t dmm_group_first(uint8_t mode) {
-    if (mode >= DMM_MODE_AC_HI_CURR) {
-        return DMM_MODE_AC_HI_CURR;
+static uint8_t dmm_mode_group(uint8_t mode, uint8_t *choice) {
+    if (mode == DMM_MODE_CONT) mode = DMM_MODE_DIODE;
+    for (uint8_t group = 0; group < DMM_GROUP_COUNT; ++group) {
+        for (uint8_t i = 0; i < dmm_groups[group].count; ++i) {
+            if (dmm_groups[group].modes[i] == mode) {
+                if (choice) *choice = i;
+                return group;
+            }
+        }
     }
-    if (mode == DMM_MODE_DIODE || mode == DMM_MODE_CAP) {
-        return DMM_MODE_DIODE;
-    }
-    if (mode >= DMM_MODE_LIVE) {
-        return DMM_MODE_LIVE;
-    }
-    return DMM_MODE_DCV;
+    return DMM_GROUP_COUNT;
 }
 
-static uint8_t dmm_group_count(uint8_t first) {
-    if (first == DMM_MODE_AC_HI_CURR) {
-        return 4;
-    }
-    if (first == DMM_MODE_LIVE) {
-        return 2;
-    }
-    if (first == DMM_MODE_DIODE) {
-        return 2;
-    }
-    return 3;
+static uint8_t dmm_is_temperature(uint8_t mode) {
+    return mode == DMM_MODE_TEMP || mode == DMM_MODE_TEMP_F;
+}
+
+static uint8_t dmm_wire_mode_for_ui(uint8_t mode) {
+    return mode == DMM_MODE_TEMP_F ? DMM_MODE_TEMP : mode;
 }
 
 static uint8_t scope_safe_display(void) {
@@ -2259,19 +2274,6 @@ static void draw_softkey(uint8_t slot, const char *label, uint16_t accent) {
     lcd_text_center(x, (uint16_t)(Y_SOFT + 16), 79, label, C_TEXT, C_TOP, 1);
 }
 
-static uint8_t dmm_group_selected(uint8_t group) {
-    if (group == 0u) {
-        return ui.dmm_mode == DMM_MODE_DCV || ui.dmm_mode == DMM_MODE_ACV || ui.dmm_mode == DMM_MODE_RES;
-    }
-    if (group == 1u) {
-        return ui.dmm_mode == DMM_MODE_DIODE || ui.dmm_mode == DMM_MODE_CAP;
-    }
-    if (group == 2u) {
-        return ui.dmm_mode == DMM_MODE_LIVE || ui.dmm_mode == DMM_MODE_TEMP;
-    }
-    return ui.dmm_mode >= DMM_MODE_AC_HI_CURR;
-}
-
 static void draw_dmm_softkeys(void);
 
 static const char *scope_measure_pretty_label(uint8_t measure);
@@ -3189,10 +3191,6 @@ static void draw_softkeys(void) {
     draw_softkey(3, f4, accent);
 }
 
-static uint8_t dmm_mode_uses_real_reading(void) {
-    return ui.dmm_mode < DMM_MODE_COUNT;
-}
-
 static uint8_t dmm_sanitize_mode(uint8_t mode) {
     if (mode == DMM_MODE_CONT) {
         return DMM_MODE_DIODE;
@@ -3483,6 +3481,18 @@ static uint8_t dmm_live_wire_detected(void) {
     return ui.dmm_mode == DMM_MODE_LIVE && dmm_live_wire_alert;
 }
 
+static int32_t dmm_display_fixed_value(void) {
+    int32_t value = dmm_value_fixed_units();
+    // The four-digit input leaves ample room for the factors in 32 bits.
+    if (ui.dmm_mode == DMM_MODE_TEMP_F && !dmm_unit_is_fahrenheit()) {
+        return value * 9 / 5 + 32 * DMM_VALUE_SCALE;
+    }
+    if (ui.dmm_mode == DMM_MODE_TEMP && dmm_unit_is_fahrenheit()) {
+        return (value - 32 * DMM_VALUE_SCALE) * 5 / 9;
+    }
+    return value;
+}
+
 static const char *dmm_live_display_value(void) {
     if (dmm_live_open_display()) {
         return "OPEN";
@@ -3493,6 +3503,17 @@ static const char *dmm_live_display_value(void) {
     if (ui.dmm_mode == DMM_MODE_LIVE) {
         return "LIVE";
     }
+    if (dmm_is_temperature(ui.dmm_mode) && dmm_value_is_numeric() &&
+        (ui.dmm_mode == DMM_MODE_TEMP_F) != dmm_unit_is_fahrenheit()) {
+        static char converted[12];
+        uint8_t decimals = dmm_text_decimals(dmm_value_text());
+        if (decimals > 4u) decimals = 4u;
+        int32_t step = dmm_pow10((uint8_t)(4u - decimals));
+        int32_t value = dmm_display_fixed_value();
+        int32_t rounded = (value + (value < 0 ? -step / 2 : step / 2)) / step;
+        dmm_format_fixed(rounded, decimals, decimals, 0, converted);
+        return converted;
+    }
     if (dmm_low_current_mode()) {
         if (!dmm_value_is_numeric()) {
             return "";
@@ -3500,7 +3521,7 @@ static const char *dmm_live_display_value(void) {
         format_low_current_value(dmm_value_text(), dmm_low_current_value);
         return dmm_low_current_value;
     }
-    return dmm_mode_uses_real_reading() ? dmm_value_text() : dmm_values[ui.dmm_mode];
+    return dmm_value_text();
 }
 
 // Units are spelled in upper case internally and over USB ("MV", "MOHM",
@@ -3541,7 +3562,10 @@ static const char *dmm_live_display_unit(void) {
     if (ui.dmm_mode == DMM_MODE_LIVE) {
         return "";
     }
-    return dmm_unit_si_text(dmm_mode_uses_real_reading() ? dmm_unit_text() : dmm_units[ui.dmm_mode]);
+    if (dmm_is_temperature(ui.dmm_mode)) {
+        return ui.dmm_mode == DMM_MODE_TEMP_F ? "~F" : "~C";
+    }
+    return dmm_unit_si_text(dmm_unit_text());
 }
 
 static const char *dmm_rel_display_value(void) {
@@ -3554,7 +3578,7 @@ static const char *dmm_rel_display_value(void) {
         return "RANGE";
     }
 
-    format_signed_fixed((int32_t)(dmm_value_fixed_units() - dmm_rel_ref_fixed), dmm_rel_value);
+    format_signed_fixed(dmm_display_fixed_value() - dmm_rel_ref_fixed, dmm_rel_value);
     return dmm_rel_value;
 }
 
@@ -3631,7 +3655,7 @@ static const char *const dmm_mode_names[] = {
     "Auto Detect", "DC Voltage", "AC Voltage", "Resistance",
     "Diode / Continuity", "Capacitance", "Live Wire", "Continuity",
     "Temperature", "AC Current (High)", "DC Current (High)",
-    "AC Current (Low)", "DC Current (Low)",
+    "AC Current (Low)", "DC Current (Low)", "Temperature",
 };
 
 // The SI spellings from dmm_unit_si_text(), with the real symbols the
@@ -4048,7 +4072,7 @@ static void dmm_draw_reading_card(void) {
     }
 
     // A temperature has no meaningful "fraction of range".
-    if (ui.dmm_mode != DMM_MODE_TEMP) {
+    if (!dmm_is_temperature(ui.dmm_mode)) {
         dmm_draw_bar(value, unit, card, bar_color);
     }
 }
@@ -4107,16 +4131,95 @@ static void draw_dmm_immersive_panel(void) {
     dmm_draw_stats();
 }
 
-static void draw_dmm_softkeys(void) {
-    static const char *const labels[4] = {"V / \xCE\xA9", "Test", "Sense", "Current"};
+static void dmm_draw_electrical_mark(int16_t x, int16_t y, uint8_t ac, uint16_t fg) {
+    if (ac) {
+        static const int8_t wave_y[] = {1, 0, -1, -2, -2, -1, 0, 1, 2, 2, 1, 0, -1};
+        for (uint8_t i = 0; i < sizeof(wave_y); ++i) {
+            lcd_rect(x + i, y + wave_y[i], 1, 2, fg);
+        }
+    } else {
+        lcd_rect(x, y - 3, 13, 2, fg);
+        for (uint8_t i = 0; i < 3u; ++i) lcd_rect(x + 5 * i, y + 2, 3, 2, fg);
+    }
+}
 
+static void dmm_draw_test_mark(int16_t x, int16_t y, uint8_t diode, uint16_t fg) {
+    int16_t left = diode ? 5 : 7;
+    int16_t right = diode ? 13 : 12;
+    lcd_rect(x, y, left + 1, 2, fg);
+    lcd_rect(x + left, y - 5, 2, 12, fg);
+    lcd_rect(x + right, y - 5, 2, 12, fg);
+    lcd_rect(x + right, y, 19 - right, 2, fg);
+    if (!diode) return;
+
+    for (int16_t row = 0; row < 2; ++row) {
+        lcd_line(x + 5, y - 5 + row, x + 12, y + row, fg);
+        lcd_line(x + 5, y + 5 + row, x + 12, y + row, fg);
+    }
+
+    // The printed continuity mark has sound arcs but no speaker cone.
+    x += 24;
+    lcd_rect(x, y, 2, 2, fg);
+    for (uint8_t i = 0; i < 3u; ++i) {
+        int16_t arc_x = (int16_t)(x + 4 + 3 * i);
+        int16_t h = (int16_t)(2 + 2 * i);
+        int16_t inset = i ? 2 : 1;
+        lcd_rect(arc_x + inset, y - h / 2, 2, h + 1, fg);
+        for (int16_t col = 0; col < 2; ++col) {
+            lcd_line(arc_x + col, y - h, arc_x + col + inset, y - h / 2, fg);
+            lcd_line(arc_x + col + inset, y + h / 2, arc_x + col, y + h, fg);
+        }
+    }
+}
+
+static void dmm_draw_softkey_label(uint8_t mode, int16_t x, uint16_t fg, uint16_t fill) {
+    enum { W = 71, TEXT_Y = DMM_KEYS_Y + 4, CENTER_Y = DMM_KEYS_Y + 13 };
+    const char *text;
+    uint8_t ac;
+    switch (mode) {
+    case DMM_MODE_DCV:
+    case DMM_MODE_ACV:
+        text = "V";
+        ac = mode == DMM_MODE_ACV;
+        break;
+    case DMM_MODE_AC_HI_CURR:
+    case DMM_MODE_DC_HI_CURR:
+    case DMM_MODE_AC_LO_CURR:
+    case DMM_MODE_DC_LO_CURR:
+        text = (mode == DMM_MODE_AC_LO_CURR || mode == DMM_MODE_DC_LO_CURR) ? "mA" : "A";
+        ac = mode == DMM_MODE_AC_HI_CURR || mode == DMM_MODE_AC_LO_CURR;
+        break;
+    case DMM_MODE_DIODE:
+    case DMM_MODE_CONT:
+        dmm_draw_test_mark(x + 17, CENTER_Y, 1, fg);
+        return;
+    case DMM_MODE_CAP:
+        dmm_draw_test_mark(x + 26, CENTER_Y, 0, fg);
+        return;
+    default:
+        if (mode == DMM_MODE_RES) text = "\xCE\xA9";
+        else if (mode == DMM_MODE_TEMP) text = "\xC2\xB0" "C";
+        else if (mode == DMM_MODE_TEMP_F) text = "\xC2\xB0" "F";
+        else if (mode == DMM_MODE_LIVE) text = "LIVE";
+        else text = "AUTO";
+        gfx_text_center(x, TEXT_Y, W, &font_medium, text, fg, fill);
+        return;
+    }
+    int16_t left = (int16_t)(x + (W - 19 - (int16_t)gfx_text_width(&font_medium, text)) / 2);
+    int16_t end = gfx_text(left, TEXT_Y, &font_medium, text, fg, fill);
+    dmm_draw_electrical_mark(end + 6, CENTER_Y, ac, fg);
+}
+
+static void draw_dmm_softkeys(void) {
+    uint8_t selected = ui.dmm_mode == DMM_MODE_AUTO ? DMM_GROUP_VOLTAGE : dmm_mode_group(ui.dmm_mode, 0);
     lcd_rect(0, DMM_KEYS_Y - 2u, LCD_WIDTH, LCD_HEIGHT - DMM_KEYS_Y + 2u, D_BG);
-    for (uint8_t i = 0; i < 4u; ++i) {
+    for (uint8_t i = 0; i < DMM_GROUP_COUNT; ++i) {
         uint16_t x = (uint16_t)(9u + i * 77u);
-        uint8_t active = dmm_group_selected(i);
+        uint8_t active = i == selected;
+        uint8_t mode = active ? ui.dmm_mode : dmm_groups[i].modes[dmm_group_choice[i]];
         uint16_t fill = active ? D_ACCENT : D_CARD;
         gfx_round_rect(x, DMM_KEYS_Y, 71, DMM_KEYS_H, 13, fill, D_BG);
-        gfx_text_center((int16_t)x, DMM_KEYS_Y + 4, 71, &font_medium, labels[i], active ? D_BG : D_SUB, fill);
+        dmm_draw_softkey_label(mode, (int16_t)x, active ? D_BG : D_SUB, fill);
     }
 }
 
@@ -4583,7 +4686,7 @@ static void scope_copy_capture_samples(void) {
 }
 
 static uint8_t scope_trigger_accepts_capture(uint8_t found) {
-    if (scope_auto_zero_active) {
+    if (scope_auto_zero_active || scope_auto_channel_mask) {
         return 1;
     }
     if (scope_slow_roll_active()) {
@@ -4600,6 +4703,7 @@ static uint8_t scope_trigger_accepts_capture(uint8_t found) {
 }
 
 static uint8_t scope_poll_frame(void) {
+    scope_auto_timeout_service();
     if (!scope_hw_enabled()) {
         scope_frame_valid = 0;
         ++scope_frame_id;
@@ -4668,7 +4772,7 @@ static uint8_t scope_poll_frame(void) {
         }
         scope_slow_roll_seq = hw_seq;
         scope_slow_roll_count = hw_count;
-        if (ui.scope_trigger_mode != SCOPE_TRIGGER_AUTO) {
+        if (ui.scope_trigger_mode != SCOPE_TRIGGER_AUTO && !scope_auto_channel_mask) {
             trigger_found = scope_slow_roll_find_trigger(hw_count, new_points, &hit_index);
             if (!scope_roll_trigger_pending && trigger_found) {
                 uint16_t trigger_pos = scope_trigger_screen_sample_pos();
@@ -4738,7 +4842,7 @@ static uint8_t scope_poll_frame(void) {
     scope_compute_stats();
     scope_trigger_locked = trigger_found ? 1u : 0u;
     scope_trigger_offset = trigger_found ? trigger_offset : 0;
-    if (trigger_found && ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE) {
+    if (trigger_found && ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE && !scope_auto_channel_mask) {
         ui.running = 0;
     }
     scope_auto_zero_service();
@@ -7656,17 +7760,12 @@ static void ui_switch_mode(ui_mode_t mode) {
     ui.scope_cursor_menu_sel = SCOPE_CURSOR_MENU_MODE;
     if (mode == UI_MODE_SCOPE) {
         ui.scope_param = SCOPE_PARAM_POSITION;
-        scope_auto_channel_mask = 0;
-        scope_auto_channel_steps_left = 0;
-        scope_auto_channel_second_pass = 0;
+        scope_auto_cancel();
         scope_sanitize_state();
         gen_resume_after_dmm(old_mode);
         ui.running = 1;
         ui.scope_ms = 0;
         scope_frame_valid = 0;
-        scope_auto_time_active = 0;
-        scope_auto_time_mask = 0;
-        scope_auto_time_steps_left = 0;
 #if !SCOPE_UI_SAFE_STUB
         scope_apply_settings();
         if (scope_fft_src == 4u) {
@@ -7746,12 +7845,7 @@ void ui_init(void) {
     scope_auto_zero_mask = 0;
     scope_auto_zero_stable_count = 0;
     scope_auto_zero_steps_left = 0;
-    scope_auto_time_active = 0;
-    scope_auto_time_mask = 0;
-    scope_auto_time_steps_left = 0;
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
-    scope_auto_channel_second_pass = 0;
+    scope_auto_cancel();
     ui.scope_display = SCOPE_DISPLAY_YT;
     ui.scope_cursor_mode = SCOPE_CURSOR_OFF;
     ui.scope_cursor_sel = 0;
@@ -7800,10 +7894,10 @@ void ui_init(void) {
         ui.dmm_mode = DMM_MODE_AUTO;
     }
     ui.auto_range = ui.dmm_mode == DMM_MODE_AUTO ? 1u : 0u;
-    ui_settings.dmm_mode = ui.dmm_mode;
+    ui_settings.dmm_mode = dmm_wire_mode_for_ui(ui.dmm_mode);
     board_buzzer_set_volume(beep_level_percent[ui_settings.beep_level]);
     board_backlight_set_level(brightness_level_percent[ui_settings.brightness_level]);
-    dmm_set_mode(ui.dmm_mode);
+    dmm_set_mode(dmm_wire_mode_for_ui(ui.dmm_mode));
     dmm_stats_reset();
     ui_switch_mode(start_mode);
     if (start_in_menu) {
@@ -8045,14 +8139,24 @@ static void dmm_pause_for_menu_overlay(void) {
     dmm_pause();
 }
 
-static void dmm_apply_selected_mode(void) {
+static void dmm_apply_selected_mode(uint8_t mode) {
+    uint8_t choice;
+    uint8_t group = dmm_mode_group(mode, &choice);
+    uint8_t scale_only = ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE &&
+                         mode != ui.dmm_mode && dmm_is_temperature(mode) && dmm_is_temperature(ui.dmm_mode);
+    if (group < DMM_GROUP_COUNT) dmm_group_choice[group] = choice;
+    ui.dmm_mode = mode;
+    ui.auto_range = mode == DMM_MODE_AUTO;
     dmm_hold_active = 0;
     dmm_rel_active = 0;
+    dmm_live_wire_alert = 0;
     dmm_stats_reset();
-    ui_settings.dmm_mode = ui.dmm_mode;
+    ui_settings.dmm_mode = dmm_wire_mode_for_ui(mode);
     settings_note(&ui_settings);
-    if (dmm_mode_uses_real_reading()) {
-        dmm_set_mode(ui.dmm_mode);
+    if (scale_only) {
+        dmm_stats_update();
+    } else {
+        dmm_set_mode(ui_settings.dmm_mode);
     }
     extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
     usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
@@ -8062,7 +8166,7 @@ void ui_note_runtime_settings(void) {
     scope_sanitize_state();
     gen_prepare_state();
 
-    ui_settings.dmm_mode = ui.dmm_mode;
+    ui_settings.dmm_mode = dmm_wire_mode_for_ui(ui.dmm_mode);
     ui_settings.scope_timebase = scope_safe_timebase();
     ui_settings.scope_display = scope_safe_display();
     ui_settings.scope_cursor_mode = scope_safe_cursor();
@@ -8275,7 +8379,7 @@ static void dmm_toggle_relative(void) {
     }
 
     dmm_hold_active = 0;
-    dmm_rel_ref_fixed = dmm_value_fixed_units();
+    dmm_rel_ref_fixed = dmm_display_fixed_value();
     ui_text_copy(dmm_rel_ref_value, dmm_live_display_value(), sizeof(dmm_rel_ref_value));
     ui_text_copy(dmm_rel_unit, dmm_live_display_unit(), sizeof(dmm_rel_unit));
     format_signed_fixed(0, dmm_rel_value);
@@ -8283,104 +8387,14 @@ static void dmm_toggle_relative(void) {
     dmm_stats_reset();
 }
 
-static void dmm_step_diode_group(int8_t dir) {
-    static const uint8_t modes[] = {DMM_MODE_DIODE, DMM_MODE_CAP};
-    uint8_t idx = 0;
-    uint8_t found = 0;
-
-    for (uint8_t i = 0; i < (uint8_t)sizeof(modes); ++i) {
-        if (ui.dmm_mode == modes[i]) {
-            idx = i;
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
-        idx = 0;
-    } else if (dir > 0) {
-        idx = (uint8_t)((idx + 1u) % (uint8_t)sizeof(modes));
+static void dmm_step_group(uint8_t group, int8_t dir) {
+    uint8_t choice;
+    if (dmm_mode_group(ui.dmm_mode, &choice) == group) {
+        cycle_u8(&choice, dmm_groups[group].count, dir);
     } else {
-        idx = idx == 0 ? (uint8_t)(sizeof(modes) - 1u) : (uint8_t)(idx - 1u);
+        choice = dmm_group_choice[group];
     }
-
-    ui.dmm_mode = modes[idx];
-    ui.auto_range = 0;
-    dmm_apply_selected_mode();
-}
-
-static void dmm_step_live_group(int8_t dir) {
-    static const uint8_t modes[] = {DMM_MODE_LIVE, DMM_MODE_TEMP};
-    uint8_t idx = ui.dmm_mode == DMM_MODE_TEMP ? 1u : 0u;
-    uint8_t found = ui.dmm_mode == DMM_MODE_LIVE || ui.dmm_mode == DMM_MODE_TEMP;
-
-    if (!found) {
-        idx = 0;
-    } else if (dir > 0) {
-        idx = (uint8_t)((idx + 1u) % (uint8_t)sizeof(modes));
-    } else {
-        idx = idx == 0 ? (uint8_t)(sizeof(modes) - 1u) : (uint8_t)(idx - 1u);
-    }
-
-    ui.dmm_mode = modes[idx];
-    ui.auto_range = 0;
-    dmm_apply_selected_mode();
-}
-
-static void dmm_step_current_group(int8_t dir) {
-    static const uint8_t modes[] = {
-        DMM_MODE_AC_HI_CURR,
-        DMM_MODE_DC_HI_CURR,
-        DMM_MODE_AC_LO_CURR,
-        DMM_MODE_DC_LO_CURR,
-    };
-    uint8_t idx = 0;
-    uint8_t found = 0;
-
-    for (uint8_t i = 0; i < (uint8_t)sizeof(modes); ++i) {
-        if (ui.dmm_mode == modes[i]) {
-            idx = i;
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
-        idx = 0;
-    } else if (dir > 0) {
-        idx = (uint8_t)((idx + 1u) % (uint8_t)sizeof(modes));
-    } else {
-        idx = idx == 0 ? (uint8_t)(sizeof(modes) - 1u) : (uint8_t)(idx - 1u);
-    }
-
-    ui.dmm_mode = modes[idx];
-    ui.auto_range = 0;
-    dmm_apply_selected_mode();
-}
-
-static void dmm_step_group(uint8_t first, uint8_t count, int8_t dir) {
-    if (first == DMM_MODE_DIODE) {
-        dmm_step_diode_group(dir);
-        return;
-    }
-    if (first == DMM_MODE_LIVE) {
-        dmm_step_live_group(dir);
-        return;
-    }
-    if (first == DMM_MODE_AC_HI_CURR) {
-        dmm_step_current_group(dir);
-        return;
-    }
-
-    if (ui.dmm_mode < first || ui.dmm_mode >= (uint8_t)(first + count)) {
-        ui.dmm_mode = first;
-    } else if (dir > 0) {
-        ui.dmm_mode = (uint8_t)(first + (uint8_t)((ui.dmm_mode - first + 1u) % count));
-    } else {
-        ui.dmm_mode = ui.dmm_mode == first ? (uint8_t)(first + count - 1u) : (uint8_t)(ui.dmm_mode - 1u);
-    }
-    ui.auto_range = 0;
-    dmm_apply_selected_mode();
+    dmm_apply_selected_mode(dmm_groups[group].modes[choice]);
 }
 
 static void scope_cycle_display(int8_t dir) {
@@ -8649,12 +8663,7 @@ static void ui_apply_saved_runtime_settings(void) {
 }
 
 static void scope_step_timebase(int8_t dir) {
-    scope_auto_time_active = 0;
-    scope_auto_time_mask = 0;
-    scope_auto_time_steps_left = 0;
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
-    scope_auto_channel_second_pass = 0;
+    scope_auto_cancel();
     cycle_u8(&ui.scope_timebase, SCOPE_TIMEBASE_COUNT, dir);
     scope_h_pos = scope_h_pos_from_value();
     scope_cursor_time_sync_screen();
@@ -8866,9 +8875,7 @@ static void scope_cycle_active_channel_vdiv(int8_t dir) {
     uint8_t idx = ui.active_ch == 2u ? 1u : 0u;
 
     cycle_u8(&scope_vdiv_ch[idx], SCOPE_VDIV_COUNT, dir);
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
-    scope_auto_channel_second_pass = 0;
+    scope_auto_cancel();
     ui.scope_vdiv = scope_safe_vdiv();
     scope_cursor_level_sync_screen();
     scope_apply_settings_keep_frame(0);
@@ -9033,9 +9040,7 @@ static void scope_auto_zero_begin(uint8_t mask) {
     scope_auto_zero_stable_count = 0;
     scope_auto_zero_active = 1;
     scope_auto_zero_steps_left = 120;
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
-    scope_auto_channel_second_pass = 0;
+    scope_auto_cancel();
     scope_trigger_offset = 0;
     scope_trigger_locked = 0;
     ui.running = 1;
@@ -9073,6 +9078,54 @@ static void scope_auto_zero_service(void) {
         scope_auto_zero_active = 0;
         scope_auto_zero_mask = 0;
     }
+}
+
+static void scope_auto_cancel(void) {
+    scope_auto_time_active = 0;
+    scope_auto_time_mask = 0;
+    scope_auto_time_steps_left = 0;
+    scope_auto_channel_mask = 0;
+    scope_auto_last_frame = scope_frame_id;
+    for (uint8_t ch = 0; ch < 2u; ++ch) {
+        scope_auto_channel_steps_left[ch] = 0;
+        scope_auto_channel_stable_count[ch] = 0;
+    }
+}
+
+static uint32_t scope_auto_frame_timeout_ms(void) {
+    uint32_t points = scope_slow_roll_active() ? 1u : SCOPE_SAMPLE_COUNT;
+    uint32_t period_ns = scope_sample_period_ns();
+    // Split before multiplying: at most 2048 samples, no 64-bit division runtime.
+    uint32_t capture_ms = (period_ns / 1000000u) * points +
+        ((period_ns % 1000000u) * points + 999999u) / 1000000u;
+    uint32_t timeout_ms = capture_ms * 3u + 1000u;
+
+    return timeout_ms < 60000u ? timeout_ms : 60000u;
+}
+
+static void scope_auto_timeout_service(void) {
+    // Frame age uses UI elapsed ticks, not a wall clock; allow several captures.
+    if ((scope_auto_time_active || scope_auto_channel_mask) &&
+        scope_frame_age_ms >= scope_auto_frame_timeout_ms()) {
+        scope_auto_cancel();
+    }
+}
+
+static uint8_t scope_auto_enabled_mask(uint8_t mask) {
+    return (uint8_t)(mask & ((scope_ch_enabled[0] ? 0x01u : 0u) |
+                             (scope_ch_enabled[1] ? 0x02u : 0u)));
+}
+
+static void scope_auto_seed_ranges(uint8_t mask) {
+    // Stock 2.0.2 starts at 50 mV/div, then only widens the input range.
+    for (uint8_t ch = 0; ch < 2u; ++ch) {
+        if (mask & (uint8_t)(1u << ch)) {
+            scope_vdiv_ch[ch] = SCOPE_AUTO_VDIV_START;
+            scope_auto_channel_steps_left[ch] = SCOPE_VDIV_COUNT - 1u - SCOPE_AUTO_VDIV_START;
+        }
+    }
+    ui.scope_vdiv = scope_safe_vdiv();
+    scope_cursor_level_sync_screen();
 }
 
 static uint8_t scope_channel_pp_raw(uint8_t idx) {
@@ -9166,14 +9219,12 @@ static uint8_t scope_auto_time_finish(uint8_t final_slow_step) {
     uint8_t changed = 0;
 
     scope_auto_time_active = 0;
+    scope_auto_channel_mask = scope_auto_enabled_mask(scope_auto_time_mask);
     if (final_slow_step && ui.scope_timebase < SCOPE_AUTO_TIMEBASE_MAX) {
         ++ui.scope_timebase;
         changed = 1;
     }
     if (changed) {
-        scope_auto_channel_mask = scope_auto_time_mask;
-        scope_auto_channel_steps_left = 8;
-        scope_auto_channel_second_pass = 1;
         ui.running = 1;
         scope_h_pos = 0;
         scope_h_value_pos = 0;
@@ -9183,8 +9234,6 @@ static uint8_t scope_auto_time_finish(uint8_t final_slow_step) {
         scope_roll_trigger_reset();
         scope_apply_settings();
         scope_hw_arm();
-    } else {
-        scope_auto_channel_request(scope_auto_time_mask);
     }
     return changed;
 }
@@ -9194,15 +9243,19 @@ static uint8_t scope_auto_time_service(void) {
     uint8_t idx;
     uint8_t valid;
 
-    if (!scope_auto_time_active || !scope_frame_valid) {
+    if (!scope_auto_time_active || !scope_frame_valid || scope_auto_last_frame == scope_frame_id) {
         return 0;
     }
-    // A fully clipped DC signal has no edges until the input range is widened.
+    scope_auto_last_frame = scope_frame_id;
+    scope_auto_time_mask = scope_auto_enabled_mask(scope_auto_time_mask);
+    if (!scope_auto_time_mask) {
+        scope_auto_cancel();
+        return 0;
+    }
+    // Resolve overrange before looking for edges, including fully clipped DC.
     uint8_t changed = 0;
     for (uint8_t ch = 0; ch < 2u; ++ch) {
-        if ((scope_auto_time_mask & (uint8_t)(1u << ch)) && scope_ch_enabled[ch] &&
-            (scope_min_raw[ch] <= SCOPE_AUTO_Y_CLIP_LOW ||
-             scope_max_raw[ch] >= SCOPE_AUTO_Y_CLIP_HIGH)) {
+        if (scope_auto_time_mask & (uint8_t)(1u << ch)) {
             changed |= scope_auto_channel_tune_vdiv(ch);
         }
     }
@@ -9213,6 +9266,17 @@ static uint8_t scope_auto_time_service(void) {
     }
     idx = scope_auto_target_channel();
     valid = scope_auto_measure_half_period(idx, &half_period);
+    if (!valid) {
+        for (uint8_t ch = 0; ch < 2u; ++ch) {
+            if (ch != idx && (scope_auto_time_mask & (uint8_t)(1u << ch)) &&
+                scope_auto_measure_half_period(ch, &half_period)) {
+                ui.scope_trigger_source = (uint8_t)(ch + 1u);
+                ui.scope_trigger_level = scope_channel_mid_raw(ch);
+                valid = 1;
+                break;
+            }
+        }
+    }
     if (valid &&
         half_period >= SCOPE_AUTO_HALFPERIOD_MIN &&
         half_period <= SCOPE_AUTO_HALFPERIOD_MAX) {
@@ -9241,10 +9305,13 @@ static void scope_auto_setup_request(uint8_t mask) {
     if (!mask) {
         mask = (uint8_t)(ui.active_ch == 2u ? 0x02u : 0x01u);
     }
+    mask = scope_auto_enabled_mask(mask);
+    scope_auto_cancel();
+    if (!mask) {
+        return;
+    }
     scope_auto_zero_active = 0;
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
-    scope_auto_channel_second_pass = 0;
+    scope_auto_seed_ranges(mask);
     scope_auto_time_mask = mask;
     scope_auto_time_steps_left = SCOPE_AUTO_TIMEBASE_MAX;
     scope_auto_time_active = 1;
@@ -9281,27 +9348,21 @@ static void scope_auto_setup_request(uint8_t mask) {
 }
 
 static uint8_t scope_auto_channel_tune_vdiv(uint8_t idx) {
+    // Widen-only tuning cannot oscillate at gain boundaries or amplify noise.
+    if (idx >= 2u || !scope_ch_enabled[idx] || !scope_auto_channel_steps_left[idx]) {
+        return 0;
+    }
     uint8_t pp = scope_channel_pp_raw(idx);
     uint8_t vdiv = scope_vdiv_ch[idx];
-    uint8_t next = vdiv;
     uint8_t clipped = (uint8_t)(scope_min_raw[idx] <= SCOPE_AUTO_Y_CLIP_LOW ||
                                 scope_max_raw[idx] >= SCOPE_AUTO_Y_CLIP_HIGH);
 
-    if (vdiv >= SCOPE_VDIV_COUNT) {
-        vdiv = 3;
-        next = vdiv;
-    }
-
-    if ((clipped || pp > SCOPE_AUTO_Y_TARGET_MAX) && vdiv + 1u < SCOPE_VDIV_COUNT) {
-        next = (uint8_t)(vdiv + 1u);
-    } else if (pp >= 8u && pp < SCOPE_AUTO_Y_TARGET_MIN && vdiv > 0u && !clipped) {
-        next = (uint8_t)(vdiv - 1u);
-    }
-
-    if (next == scope_vdiv_ch[idx]) {
+    if ((!clipped && pp <= SCOPE_AUTO_Y_TARGET_MAX) || vdiv + 1u >= SCOPE_VDIV_COUNT) {
         return 0;
     }
-    scope_vdiv_ch[idx] = next;
+    --scope_auto_channel_steps_left[idx];
+    scope_auto_channel_stable_count[idx] = 0;
+    scope_vdiv_ch[idx] = (uint8_t)(vdiv + 1u);
     if (idx == (ui.active_ch == 2u ? 1u : 0u)) {
         ui.scope_vdiv = scope_safe_vdiv();
         scope_cursor_level_sync_screen();
@@ -9315,7 +9376,6 @@ static uint8_t scope_auto_channel_tune(uint8_t idx) {
     if (idx >= 2u) {
         return 0;
     }
-    scope_ch_enabled[idx] = 1;
     changed = scope_auto_channel_tune_vdiv(idx);
     scope_set_channel_pos_from_avg(idx);
     if (idx == scope_trigger_source_index()) {
@@ -9325,51 +9385,46 @@ static uint8_t scope_auto_channel_tune(uint8_t idx) {
 }
 
 static void scope_auto_channel_request(uint8_t mask) {
-    mask &= 0x03u;
+    mask = scope_auto_enabled_mask((uint8_t)(mask & 0x03u));
+    scope_auto_cancel();
     if (!mask) {
         return;
     }
+    scope_auto_zero_active = 0;
     ui.running = 1;
+    scope_auto_seed_ranges(mask);
     scope_auto_channel_mask = mask;
-    scope_auto_channel_steps_left = 8;
-    scope_auto_channel_second_pass = 1;
-    if (scope_frame_valid) {
-        scope_auto_channel_service();
-    }
+    scope_apply_settings();
     scope_hw_arm();
 }
 
 static void scope_auto_channel_service(void) {
     uint8_t changed = 0;
 
-    if (!scope_auto_channel_mask || !scope_frame_valid) {
+    if (!scope_auto_channel_mask || !scope_frame_valid || scope_auto_last_frame == scope_frame_id) {
         return;
     }
-    if (scope_auto_channel_mask & 0x01u) {
-        changed = (uint8_t)(changed | scope_auto_channel_tune(0));
-    }
-    if (scope_auto_channel_mask & 0x02u) {
-        changed = (uint8_t)(changed | scope_auto_channel_tune(1));
+    scope_auto_last_frame = scope_frame_id;
+    scope_auto_channel_mask = scope_auto_enabled_mask(scope_auto_channel_mask);
+    for (uint8_t ch = 0; ch < 2u; ++ch) {
+        uint8_t bit = (uint8_t)(1u << ch);
+        if (!(scope_auto_channel_mask & bit)) {
+            continue;
+        }
+        if (scope_auto_channel_tune(ch)) {
+            changed = 1;
+        } else if (++scope_auto_channel_stable_count[ch] >= SCOPE_AUTO_STABLE_FRAMES) {
+            scope_auto_channel_mask &= (uint8_t)~bit;
+        }
     }
     scope_trace_invalidate();
-    if (changed && scope_auto_channel_steps_left) {
-        --scope_auto_channel_steps_left;
+    if (changed) {
         scope_apply_settings();
         scope_hw_arm();
-        return;
     }
-    if (scope_auto_channel_second_pass) {
-        scope_auto_channel_second_pass = 0;
-        scope_auto_channel_steps_left = 3;
-        scope_apply_settings();
-        scope_hw_arm();
-        return;
+    if (!scope_auto_channel_mask) {
+        scope_auto_cancel();
     }
-    if (scope_auto_channel_mask & (uint8_t)(1u << scope_trigger_source_index())) {
-        ui.scope_trigger_level = scope_channel_mid_raw(scope_trigger_source_index());
-    }
-    scope_auto_channel_mask = 0;
-    scope_auto_channel_steps_left = 0;
 }
 
 static void scope_set_channel_pos_from_avg(uint8_t idx) {
@@ -9517,7 +9572,7 @@ static uint8_t scope_play_menu_value(void) {
 
 static void primary_action(void) {
     if (ui.mode == UI_MODE_DMM) {
-        dmm_step_group(DMM_MODE_DCV, 3, 1);
+        dmm_step_group(DMM_GROUP_VOLTAGE, 1);
     } else if (ui.mode == UI_MODE_SCOPE) {
         scope_open_move_mode();
     } else {
@@ -9527,41 +9582,21 @@ static void primary_action(void) {
 }
 
 static void dmm_step_all_modes(int8_t dir) {
-    static const uint8_t modes[] = {
-        DMM_MODE_DCV,
-        DMM_MODE_ACV,
-        DMM_MODE_RES,
-        DMM_MODE_DIODE,
-        DMM_MODE_CAP,
-        DMM_MODE_LIVE,
-        DMM_MODE_TEMP,
-        DMM_MODE_AC_HI_CURR,
-        DMM_MODE_DC_HI_CURR,
-        DMM_MODE_AC_LO_CURR,
-        DMM_MODE_DC_LO_CURR,
-    };
-    uint8_t idx = 0;
-    uint8_t found = 0;
-
-    for (uint8_t i = 0; i < (uint8_t)sizeof(modes); ++i) {
-        if (ui.dmm_mode == modes[i]) {
-            idx = i;
-            found = 1;
-            break;
-        }
-    }
-
-    if (!found) {
-        idx = 0;
-    } else if (dir > 0) {
-        idx = (uint8_t)((idx + 1u) % (uint8_t)sizeof(modes));
+    uint8_t choice;
+    uint8_t group = dmm_mode_group(ui.dmm_mode, &choice);
+    if (group == DMM_GROUP_COUNT) {
+        group = DMM_GROUP_VOLTAGE;
+        choice = 0;
+    } else if (dir > 0 && choice + 1u == dmm_groups[group].count) {
+        cycle_u8(&group, DMM_GROUP_COUNT, dir);
+        choice = 0;
+    } else if (dir < 0 && choice == 0) {
+        cycle_u8(&group, DMM_GROUP_COUNT, dir);
+        choice = dmm_groups[group].count - 1u;
     } else {
-        idx = idx == 0 ? (uint8_t)(sizeof(modes) - 1u) : (uint8_t)(idx - 1u);
+        choice = (uint8_t)(choice + dir);
     }
-
-    ui.dmm_mode = modes[idx];
-    ui.auto_range = 0;
-    dmm_apply_selected_mode();
+    dmm_apply_selected_mode(dmm_groups[group].modes[choice]);
 }
 
 static void arb_load_waveform(void) {
@@ -9635,8 +9670,8 @@ static uint8_t gen_adjust_current_value(int8_t dir, uint8_t repeat) {
 
 static void adjust_current(int8_t dir, uint8_t repeat) {
     if (ui.mode == UI_MODE_DMM) {
-        uint8_t first = dmm_group_first(ui.dmm_mode);
-        dmm_step_group(first, dmm_group_count(first), dir);
+        uint8_t group = dmm_mode_group(ui.dmm_mode, 0);
+        dmm_step_group(group < DMM_GROUP_COUNT ? group : DMM_GROUP_VOLTAGE, dir);
     } else if (ui.mode == UI_MODE_SCOPE) {
         (void)repeat;
         scope_adjust_selected_param(dir);
@@ -9649,7 +9684,7 @@ static void secondary_action(void) {
     if (ui.mode == UI_MODE_SCOPE) {
         scope_select_or_advance_param(SCOPE_PARAM_TIME);
     } else if (ui.mode == UI_MODE_DMM) {
-        dmm_step_group(DMM_MODE_DIODE, 2, 1);
+        dmm_step_group(DMM_GROUP_TEST, 1);
     } else {
         gen_step_param(1);
     }
@@ -10554,14 +10589,7 @@ void ui_handle_keys(uint32_t events) {
     }
     if (events & KEY_AUTO) {
         if (ui.mode == UI_MODE_DMM) {
-            ui.dmm_mode = DMM_MODE_AUTO;
-            ui.auto_range = 1;
-            dmm_hold_active = 0;
-            dmm_rel_active = 0;
-            dmm_stats_reset();
-            dmm_set_mode(DMM_MODE_AUTO);
-            ui_settings.dmm_mode = DMM_MODE_AUTO;
-            settings_note(&ui_settings);
+            dmm_apply_selected_mode(DMM_MODE_AUTO);
         } else if (ui.mode == UI_MODE_SCOPE) {
             if (ui.scope_param == SCOPE_PARAM_ZERO) {
                 scope_auto_zero_begin((uint8_t)(ui.active_ch == 2u ? 0x02u : 0x01u));
@@ -10593,7 +10621,7 @@ void ui_handle_keys(uint32_t events) {
     if (events & KEY_F3) {
         softkeys_flash();
         if (ui.mode == UI_MODE_DMM) {
-            dmm_step_group(DMM_MODE_LIVE, 2, 1);
+            dmm_step_group(DMM_GROUP_SENSE, 1);
             ui_render_local_change();
         } else if (ui.mode == UI_MODE_GEN) {
             gen_select_or_advance_param(GEN_PARAM_DUTY);
@@ -10666,7 +10694,7 @@ void ui_handle_keys(uint32_t events) {
     if (events & KEY_F4) {
         softkeys_flash();
         if (ui.mode == UI_MODE_DMM) {
-            dmm_step_group(DMM_MODE_AC_HI_CURR, 4, 1);
+            dmm_step_group(DMM_GROUP_CURRENT, 1);
             ui_render_local_change();
         } else if (ui.mode == UI_MODE_GEN) {
             gen_select_or_advance_param(GEN_PARAM_AMP);
@@ -11124,13 +11152,8 @@ void ui_tick(uint32_t elapsed_ms) {
 
 void ui_set_dmm_mode(uint8_t mode) {
     if (mode < DMM_MODE_COUNT) {
-        ui.dmm_mode = mode;
-        dmm_set_mode(mode);
-        dmm_stats_reset();
-        ui_settings.dmm_mode = mode;
+        dmm_apply_selected_mode(mode);
         ui_render_local_change();
-        extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
-        usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
     }
 }
 
@@ -11185,9 +11208,7 @@ void ui_inject_keys(uint32_t events) {
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir) {
     if (ui.mode == UI_MODE_SCOPE && ch < 2u) {
         cycle_u8(&scope_vdiv_ch[ch], SCOPE_VDIV_COUNT, dir);
-        scope_auto_channel_mask = 0;
-        scope_auto_channel_steps_left = 0;
-        scope_auto_channel_second_pass = 0;
+        scope_auto_cancel();
         ui.scope_vdiv = scope_safe_vdiv();
         scope_cursor_level_sync_screen();
         scope_apply_settings();

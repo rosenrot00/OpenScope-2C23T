@@ -14,8 +14,28 @@ static unsigned configure_count;
 static uint8_t configured_timebase;
 static uint8_t configured_range[2];
 static uint8_t configured_coupling[2];
+static uint8_t capture_ready;
 
 void scope_hw_arm(void) { ++arm_count; }
+void scope_hw_set_offsets(uint16_t dac0, uint16_t dac1) { (void)dac0; (void)dac1; }
+void settings_note(const settings_state_t *settings) { (void)settings; }
+uint8_t scope_hw_enabled(void) { return 1; }
+uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
+    (void)timebase;
+    assert(len == SCOPE_SAMPLE_BYTES);
+    if (!capture_ready) return 0;
+    memcpy(dst, scope_samples, len);
+    return 1;
+}
+uint8_t scope_hw_capture_point(uint8_t sample[2], uint8_t timebase) {
+    (void)sample; (void)timebase;
+    return 0;
+}
+uint8_t scope_hw_slow_snapshot(uint8_t *ch1, uint8_t *ch2, uint16_t max_points,
+                              uint16_t *count, uint16_t *seq) {
+    (void)ch1; (void)ch2; (void)max_points; (void)count; (void)seq;
+    return 0;
+}
 void scope_hw_slow_start(uint8_t timebase) { (void)timebase; }
 void scope_hw_slow_stop(void) {}
 void scope_hw_configure_channels(uint8_t timebase, uint8_t range0, uint8_t range1,
@@ -58,12 +78,19 @@ void lcd_text(uint16_t x, uint16_t y, const char *text, uint16_t fg, uint16_t bg
 }
 
 static void setup(void) {
+    ui.mode = UI_MODE_SCOPE;
     ui.scope_display = SCOPE_DISPLAY_YT;
     ui.scope_timebase = 11;
     ui.active_ch = 1;
     ui.scope_trigger_source = 1;
     ui.scope_trigger_edge = 0;
+    ui.scope_trigger_level = 128;
+    ui.scope_trigger_mode = SCOPE_TRIGGER_AUTO;
     scope_frame_valid = 1;
+    scope_frame_id = 0;
+    scope_frame_age_ms = 0;
+    scope_auto_zero_active = 0;
+    scope_auto_cancel();
     scope_trigger_locked = 0;
     scope_h_pos = 0;
     scope_measure_hist_ready = 0;
@@ -75,8 +102,11 @@ static void setup(void) {
         scope_probe_x10[ch] = 0;
         scope_vdiv_ch[ch] = 5;
         scope_coupling_dc[ch] = 1;
+        scope_zero_offset[ch] = 0;
+        scope_ch_pos[ch] = 0;
     }
     math_lines = arm_count = configure_count = 0;
+    capture_ready = 0;
 }
 
 static void fill_square(uint16_t period, uint16_t high_samples, uint8_t low, uint8_t high) {
@@ -271,45 +301,299 @@ static void test_bode_limits(void) {
     assert(!bode_measure_step(0));
 }
 
+static void auto_assert_applied(void) {
+    assert(configured_timebase == ui.scope_timebase);
+    assert(configured_range[0] == scope_vdiv_ch[0]);
+    assert(configured_range[1] == scope_vdiv_ch[1]);
+    assert(ui.scope_vdiv == scope_vdiv_ch[ui.active_ch == 2u ? 1u : 0u]);
+}
+
+static void auto_fill_channel(uint8_t ch, uint16_t period, uint8_t low, uint8_t high) {
+    for (uint16_t i = 0; i < SCOPE_SAMPLE_COUNT; ++i) {
+        scope_samples[i * 2u + ch] = i % period < period / 2u ? high : low;
+    }
+}
+
+static void auto_frame(void) {
+    ++scope_frame_id;
+    scope_frame_valid = 1;
+    scope_compute_stats();
+    if (!scope_auto_time_service()) {
+        scope_auto_channel_service();
+    }
+    auto_assert_applied();
+}
+
+static unsigned auto_finish(void) {
+    unsigned frames = 0;
+    while ((scope_auto_time_active || scope_auto_channel_mask) && frames < 40u) {
+        auto_frame();
+        ++frames;
+    }
+    assert(!scope_auto_time_active && !scope_auto_channel_mask);
+    return frames;
+}
+
+static void test_auto_noise_and_no_signal(void) {
+    setup();
+    scope_vdiv_ch[1] = 0;
+    scope_auto_setup_request(3);
+    assert(scope_vdiv_ch[0] == 1 && scope_vdiv_ch[1] == 1);
+    assert(ui.scope_timebase == 0 && !scope_frame_valid);
+    auto_fill_channel(0, 2, 125, 131);
+    auto_fill_channel(1, 2, 124, 132);
+    assert(auto_finish() == SCOPE_AUTO_TIMEBASE_MAX + 1u + SCOPE_AUTO_STABLE_FRAMES);
+    assert(ui.scope_timebase == SCOPE_AUTO_TIMEBASE_MAX);
+    assert(scope_vdiv_ch[0] == 1 && scope_vdiv_ch[1] == 1);
+
+    setup();
+    scope_vdiv_ch[0] = 8;
+    scope_auto_setup_request(3);
+    auto_fill_channel(0, 2, 128, 128);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_finish();
+    assert(scope_vdiv_ch[0] == 1 && scope_vdiv_ch[1] == 1);
+    assert(ui.scope_timebase == SCOPE_AUTO_TIMEBASE_MAX);
+}
+
+static void test_auto_range_boundary_and_budget(void) {
+    setup();
+    scope_vdiv_ch[0] = 0;
+    scope_auto_channel_request(1);
+    assert(scope_vdiv_ch[0] == 1);
+    unsigned frames = 0;
+    while (scope_auto_channel_mask && frames < 20u) {
+        // The old bidirectional rule oscillated between these two gain steps.
+        uint8_t pp = configured_range[0] == 1u ? 71u : 178u;
+        auto_fill_channel(0, 50, (uint8_t)(128u - pp / 2u), (uint8_t)(128u + (pp + 1u) / 2u));
+        auto_fill_channel(1, 2, 128, 128);
+        auto_frame();
+        ++frames;
+    }
+    assert(frames == SCOPE_AUTO_STABLE_FRAMES && !scope_auto_channel_mask);
+    assert(scope_vdiv_ch[0] == 1 && configure_count == 1);
+
+    setup();
+    scope_auto_channel_request(1);
+    scope_auto_channel_steps_left[0] = 1;
+    auto_fill_channel(0, 50, 28, 228);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_frame();
+    assert(scope_vdiv_ch[0] == 2 && !scope_auto_channel_steps_left[0]);
+    unsigned configs = configure_count;
+    auto_finish();
+    assert(scope_vdiv_ch[0] == 2 && configure_count == configs);
+    auto_assert_applied();
+
+    setup();
+    scope_auto_channel_request(1);
+    scope_vdiv_ch[0] = 0;
+    scope_apply_settings();
+    auto_fill_channel(0, 50, 39, 217);
+    auto_frame();
+    assert(scope_vdiv_ch[0] == 1);
+    auto_fill_channel(0, 50, 93, 164);
+    auto_finish();
+    assert(scope_vdiv_ch[0] == 1);
+}
+
+static void test_auto_channel_progress(void) {
+    setup();
+    scope_auto_channel_request(3);
+    auto_fill_channel(0, 2, 125, 131);
+    auto_fill_channel(1, 2, 255, 255);
+    auto_frame();
+    assert(scope_auto_channel_stable_count[0] == 1 && scope_auto_channel_mask == 3);
+    scope_auto_channel_service();
+    assert(scope_auto_channel_stable_count[0] == 1 && scope_auto_channel_mask == 3);
+    auto_frame();
+    assert(scope_auto_channel_mask == 2 && scope_vdiv_ch[0] == 1);
+    auto_fill_channel(0, 50, 28, 228);
+    auto_finish();
+    assert(scope_vdiv_ch[0] == 1 && scope_vdiv_ch[1] == 8);
+
+    setup();
+    scope_frame_id = UINT16_MAX;
+    scope_auto_channel_request(1);
+    auto_fill_channel(0, 2, 128, 128);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_frame();
+    assert(scope_frame_id == 0 && scope_auto_channel_stable_count[0] == 1);
+    auto_frame();
+    assert(!scope_auto_channel_mask);
+}
+
+static void test_auto_selected_and_disabled(void) {
+    setup();
+    ui.active_ch = 2;
+    scope_auto_channel_request(2);
+    assert(!scope_auto_time_active && ui.scope_timebase == 11);
+    assert(scope_vdiv_ch[0] == 5 && scope_vdiv_ch[1] == 1);
+    auto_fill_channel(0, 2, 255, 255);
+    auto_fill_channel(1, 2, 124, 132);
+    assert(auto_finish() == SCOPE_AUTO_STABLE_FRAMES);
+    assert(scope_vdiv_ch[0] == 5 && scope_vdiv_ch[1] == 1);
+
+    setup();
+    scope_ch_enabled[0] = 0;
+    scope_ch_pos[0] = 21;
+    scope_auto_setup_request(3);
+    assert(scope_auto_time_mask == 2 && ui.scope_trigger_source == 2);
+    assert(!scope_ch_enabled[0] && scope_vdiv_ch[0] == 5 && scope_ch_pos[0] == 21);
+    auto_fill_channel(0, 2, 255, 255);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_finish();
+    assert(!scope_ch_enabled[0] && scope_vdiv_ch[0] == 5);
+
+    setup();
+    scope_ch_enabled[1] = 0;
+    scope_auto_channel_request(2);
+    assert(!scope_ch_enabled[1] && scope_vdiv_ch[1] == 5);
+    assert(!scope_auto_channel_mask && !scope_auto_time_active && !configure_count);
+    scope_ch_enabled[0] = 0;
+    scope_auto_setup_request(3);
+    assert(!scope_auto_time_active && !configure_count);
+
+    setup();
+    scope_coupling_dc[1] = 0;
+    scope_probe_x10[1] = 1;
+    scope_auto_channel_request(3);
+    auto_fill_channel(0, 2, 128, 128);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_frame();
+    scope_ch_enabled[1] = 0;
+    auto_finish();
+    assert(!scope_ch_enabled[1] && !scope_coupling_dc[1] && scope_probe_x10[1]);
+    assert(!configured_coupling[1]);
+}
+
+static void test_auto_weak_signal_and_source(void) {
+    setup();
+    scope_vdiv_ch[0] = 8;
+    scope_auto_setup_request(1);
+    auto_fill_channel(0, 50, 122, 134);
+    auto_fill_channel(1, 2, 128, 128);
+    auto_frame();
+    assert(!scope_auto_time_active && ui.scope_timebase == 1);
+    auto_finish();
+    assert(scope_vdiv_ch[0] == 1 && scope_vdiv_ch[1] == 5);
+
+    setup();
+    scope_auto_setup_request(3);
+    auto_fill_channel(0, 2, 128, 128);
+    auto_fill_channel(1, 50, 122, 134);
+    auto_frame();
+    assert(!scope_auto_time_active && ui.scope_timebase == 1 && ui.scope_trigger_source == 2);
+    auto_finish();
+}
+
 static void test_auto_clipped(void) {
     setup();
     scope_auto_setup_request(3);
     assert(scope_coupling_dc[0] == 1 && scope_coupling_dc[1] == 1);
-    scope_frame_valid = 1;
-    scope_min_raw[0] = scope_max_raw[0] = 255;
-    scope_min_raw[1] = scope_max_raw[1] = 0;
-    assert(scope_auto_time_service());
+    auto_fill_channel(0, 2, 255, 255);
+    auto_fill_channel(1, 2, 0, 0);
+    auto_frame();
     assert(ui.scope_timebase == 0 && scope_auto_time_steps_left == SCOPE_AUTO_TIMEBASE_MAX);
-    assert(scope_vdiv_ch[0] == 6 && scope_vdiv_ch[1] == 6);
+    assert(scope_vdiv_ch[0] == 2 && scope_vdiv_ch[1] == 2);
     assert(scope_auto_time_active && !scope_frame_valid && arm_count == 2);
     assert(configure_count == 2 && configured_timebase == 0);
-    assert(configured_range[0] == 6 && configured_range[1] == 6);
+    assert(configured_range[0] == 2 && configured_range[1] == 2);
     assert(configured_coupling[0] == 1 && configured_coupling[1] == 1);
-    for (uint8_t ch = 0; ch < 2; ++ch) {
-        scope_min_raw[ch] = 100;
-        scope_max_raw[ch] = 150;
-        scope_avg_raw[ch] = 125;
-    }
-    fill_square(50, 25, 100, 150);
-    scope_frame_valid = 1;
-    assert(scope_auto_time_service());
+    auto_fill_channel(0, 50, 100, 150);
+    auto_fill_channel(1, 50, 100, 150);
+    auto_frame();
     assert(ui.scope_timebase == 1 && !scope_auto_time_active);
     assert(scope_auto_channel_mask == 3);
+    auto_finish();
+
     setup();
     scope_auto_setup_request(1);
-    scope_frame_valid = 1;
-    scope_min_raw[0] = scope_max_raw[0] = 255;
-    scope_min_raw[1] = scope_max_raw[1] = 255;
-    assert(scope_auto_time_service());
-    assert(scope_vdiv_ch[0] == 6 && scope_vdiv_ch[1] == 5);
-    // Unrecoverable hardware overrange still exits the bounded search.
-    for (unsigned i = 0; i < 30 && scope_auto_time_active; ++i) {
-        scope_frame_valid = 1;
-        scope_min_raw[0] = scope_max_raw[0] = scope_avg_raw[0] = 255;
-        scope_auto_time_service();
-    }
-    assert(!scope_auto_time_active);
+    auto_fill_channel(0, 2, 255, 255);
+    auto_fill_channel(1, 2, 255, 255);
+    assert(auto_finish() <= SCOPE_AUTO_TIMEBASE_MAX + SCOPE_VDIV_COUNT + SCOPE_AUTO_STABLE_FRAMES);
+    assert(scope_vdiv_ch[0] == 8 && scope_vdiv_ch[1] == 5);
     assert(ui.scope_timebase == SCOPE_AUTO_TIMEBASE_MAX);
+}
+
+static void test_auto_channel_trigger_modes(void) {
+    setup();
+    ui.scope_trigger_mode = SCOPE_TRIGGER_NORMAL;
+    scope_auto_channel_request(1);
+    capture_ready = 1;
+    auto_fill_channel(0, 2, 128, 128);
+    auto_fill_channel(1, 2, 128, 128);
+    for (unsigned i = 0; i < SCOPE_AUTO_STABLE_FRAMES; ++i) {
+        assert(scope_poll_frame());
+        auto_assert_applied();
+    }
+    assert(!scope_auto_channel_mask && ui.scope_trigger_mode == SCOPE_TRIGGER_NORMAL);
+    assert(!scope_poll_frame());
+
+    setup();
+    ui.scope_trigger_mode = SCOPE_TRIGGER_SINGLE;
+    scope_auto_channel_request(1);
+    capture_ready = 1;
+    auto_fill_channel(0, 50, 100, 150);
+    auto_fill_channel(1, 2, 128, 128);
+    for (unsigned i = 0; i < SCOPE_AUTO_STABLE_FRAMES; ++i) {
+        assert(scope_poll_frame() && ui.running);
+        auto_assert_applied();
+    }
+    assert(!scope_auto_channel_mask && ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE);
+    assert(scope_poll_frame() && !ui.running);
+}
+
+static void test_auto_timeout_and_cancel(void) {
+    setup();
+    scope_auto_setup_request(3);
+    uint32_t timeout = scope_auto_frame_timeout_ms();
+    unsigned configs = configure_count;
+    scope_frame_age_ms = (uint16_t)(timeout - 1u);
+    assert(!scope_poll_frame() && scope_auto_time_active);
+    scope_frame_age_ms = (uint16_t)timeout;
+    assert(!scope_poll_frame() && !scope_auto_time_active && !scope_auto_channel_mask);
+    assert(configure_count == configs);
+    auto_assert_applied();
+
+    setup();
+    ui.scope_timebase = 17;
+    scope_auto_channel_request(1);
+    uint32_t capture_ms = (uint32_t)(((uint64_t)scope_sample_period_ns() * SCOPE_SAMPLE_COUNT + 999999u) / 1000000u);
+    timeout = scope_auto_frame_timeout_ms();
+    assert(timeout >= capture_ms * 2u && timeout <= 60000u);
+    scope_frame_age_ms = (uint16_t)capture_ms;
+    assert(!scope_poll_frame() && scope_auto_channel_mask == 1);
+    scope_frame_age_ms = (uint16_t)timeout;
+    assert(!scope_poll_frame() && !scope_auto_channel_mask);
+    auto_assert_applied();
+
+    for (uint8_t tb = 0; tb < SCOPE_TIMEBASE_COUNT; ++tb) {
+        setup();
+        ui.scope_timebase = tb;
+        scope_auto_channel_request(1);
+        uint32_t points = scope_slow_roll_active() ? 1u : SCOPE_SAMPLE_COUNT;
+        capture_ms = (uint32_t)(((uint64_t)scope_sample_period_ns() * points + 999999u) / 1000000u);
+        timeout = scope_auto_frame_timeout_ms();
+        assert(timeout >= capture_ms * 2u && timeout <= 60000u);
+        scope_frame_age_ms = (uint16_t)(timeout - 1u);
+        scope_auto_timeout_service();
+        assert(scope_auto_channel_mask == 1);
+        scope_frame_age_ms = (uint16_t)timeout;
+        scope_auto_timeout_service();
+        assert(!scope_auto_channel_mask);
+        auto_assert_applied();
+    }
+
+    setup();
+    scope_auto_setup_request(3);
+    scope_cycle_active_channel_vdiv(1);
+    assert(!scope_auto_time_active && !scope_auto_channel_mask);
+    auto_assert_applied();
+    scope_auto_setup_request(3);
+    scope_step_timebase(1);
+    assert(!scope_auto_time_active && !scope_auto_channel_mask);
+    auto_assert_applied();
 }
 
 int main(void) {
@@ -318,7 +602,14 @@ int main(void) {
     test_mean();
     test_math();
     test_bode_limits();
+    test_auto_noise_and_no_signal();
+    test_auto_range_boundary_and_budget();
+    test_auto_channel_progress();
+    test_auto_selected_and_disabled();
+    test_auto_weak_signal_and_source();
     test_auto_clipped();
+    test_auto_channel_trigger_modes();
+    test_auto_timeout_and_cancel();
     printf("scope measurements regression tests passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
 }

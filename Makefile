@@ -1,5 +1,5 @@
 PROJECT := f2c23t_hello
-VERSION ?= v2026.11.5
+VERSION ?= v2026.11.6
 BUILD_ROOT ?= build
 BUILD ?= $(BUILD_ROOT)
 DIST ?= dist
@@ -83,7 +83,8 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4 \
                   $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4 \
                   $(BUILD_ROOT)/tests/ui_render-old $(BUILD_ROOT)/tests/ui_render-hw4 \
-                  $(BUILD_ROOT)/tests/gfx
+                  $(BUILD_ROOT)/tests/gfx \
+                  $(BUILD_ROOT)/tests/w25q-old $(BUILD_ROOT)/tests/w25q-hw4
 
 .PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test preview screenshots
 
@@ -109,12 +110,14 @@ test: $(HOST_TEST_BINS)
 	$(BUILD_ROOT)/tests/ui_render-old
 	$(BUILD_ROOT)/tests/ui_render-hw4
 	$(BUILD_ROOT)/tests/gfx
+	$(BUILD_ROOT)/tests/w25q-old
+	$(BUILD_ROOT)/tests/w25q-hw4
 
 $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloader-hw4: tests/bootloader.c src/bootloader.c src/bootloader.h src/app_config.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) -DAPP_BASE_ADDR=$(if $(filter %-hw4,$@),0x08007000u,0x08008000u) $< $(HOST_TEST_LINK) -o $@
 
-$(BUILD_ROOT)/tests/bootloader_export-old $(BUILD_ROOT)/tests/bootloader_export-hw4: tests/bootloader_export.c src/usb_msc.c src/usb_msc.h src/bootloader.h
+$(BUILD_ROOT)/tests/bootloader_export-old $(BUILD_ROOT)/tests/bootloader_export-hw4: tests/bootloader_export.c src/usb_msc.c src/usb_msc.h src/bootloader.h src/w25q.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) -DAPP_BASE_ADDR=$(if $(filter %-hw4,$@),0x08007000u,0x08008000u) $< $(HOST_TEST_LINK) -o $@
 
@@ -154,11 +157,15 @@ $(BUILD_ROOT)/tests/gfx: tests/gfx.c src/gfx.c src/gfx.h src/ui_fonts.c src/ui_f
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) $< src/ui_fonts.c $(HOST_TEST_LINK) -o $@
 
+$(BUILD_ROOT)/tests/w25q-old $(BUILD_ROOT)/tests/w25q-hw4: tests/w25q.c src/w25q.c src/w25q.h src/board.h src/hw.h
+	@mkdir -p $(dir $@)
+	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< $(HOST_TEST_LINK) -o $@
+
 # Render every screen on the host with the firmware's own drawing code:
 # build/preview/*.ppm are the exact 320x240 framebuffers.
 preview: tools/screen_preview.c tools/host_display.h src/ui.c src/dmm.c src/display.c src/gfx.c src/ui_fonts.c
 	@mkdir -p $(BUILD_ROOT)/preview
-	$(CLANG) -std=c11 -O1 -Wall -Wextra -ffunction-sections -fdata-sections -DHW_TARGET_HW40=1 -DSCOPE_UI_SAFE_STUB=0 -DEXPECTED_FW_VERSION='"$(VERSION)"' $< $(HOST_TEST_LINK) -o $(BUILD_ROOT)/preview/run
+	$(CLANG) -std=c11 -O1 -Wall -Wextra -ffunction-sections -fdata-sections -DHW_TARGET_HW40=1 -DSCOPE_UI_SAFE_STUB=0 -DSCREEN_PREVIEW_DIR='"$(BUILD_ROOT)/preview"' $< $(HOST_TEST_LINK) -o $(BUILD_ROOT)/preview/run
 	$(BUILD_ROOT)/preview/run
 
 # README screenshots: the preview frames at 2x, pixel-exact (needs Pillow).

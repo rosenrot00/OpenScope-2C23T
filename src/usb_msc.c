@@ -69,6 +69,7 @@ enum {
     MSC_CSW_OK = 0,
     MSC_CSW_FAIL = 1,
     MSC_UPDATE_IDLE_APPLY_MS = 1000,
+    USB_LINK_QUIET_CYCLES = 28800000u,
 };
 
 enum UsbEp0State {
@@ -120,9 +121,20 @@ static uint16_t ep0_left;
 static uint8_t ep0_pending_address;
 static uint8_t ep0_address_pending;
 static volatile uint8_t usb_configured;
+static volatile uint8_t usb_suspended;
+static uint16_t usb_last_frame;
+static uint32_t usb_last_frame_ticks;
 static uint8_t usb_ready;
 
-static enum MscState msc_state;
+static volatile enum MscState msc_state;
+static uint8_t msc_out_packet[USB_EP1_SIZE];
+static volatile uint8_t msc_out_pending;
+static uint16_t msc_out_len;
+static uint16_t msc_out_pos;
+static volatile uint32_t msc_io_epoch;
+static uint32_t raw_flush_epoch;
+static uint8_t raw_flush_pending;
+static uint8_t msc_write_changed;
 static uint8_t msc_small[64];
 static uint8_t msc_sense_key;
 static uint8_t msc_sense_asc;
@@ -152,6 +164,19 @@ static uint8_t raw_update_scan_pending;
 static uint8_t raw_update_streaming;
 static uint32_t raw_update_dir_byte_addr;
 static uint32_t raw_screenshot_clusters[SCREENSHOT_CLUSTER_COUNT];
+
+static uint32_t cdc_pause_usb_irq(void);
+static void cdc_restore_usb_irq(uint32_t enabled);
+
+static void msc_abort_transfer(void) {
+    ++msc_io_epoch;
+    msc_out_pending = 0;
+    msc_out_len = msc_out_pos = 0;
+    msc_state = MSC_IDLE;
+    raw_write_loaded = raw_write_dirty = raw_write_failed = 0;
+    // An in-flight flash operation retains its buffer until polling completes.
+    // Its old epoch prevents it from acknowledging a reset/aborted command.
+}
 
 typedef struct {
     uint8_t valid;
@@ -1201,6 +1226,9 @@ static screenshot_save_t raw_fat_save_latest_screenshot(void) {
 }
 
 uint8_t usb_msc_storage_begin(void) {
+    if (raw_flush_pending || w25q_write_sector_busy() || msc_out_pending) {
+        return 0;
+    }
     if (!usb_ready) {
         return 1;
     }
@@ -1621,19 +1649,21 @@ static void raw_write_chunk(uint32_t lba, uint16_t offset, const uint8_t *data, 
     if (!raw_write_prepare(lba)) {
         return;
     }
-    buf_copy(&raw_write_sector[offset], data, len);
-    raw_write_dirty = 1;
-    if ((uint16_t)(offset + len) >= MSC_SECTOR_SIZE && !raw_write_flush()) {
-        raw_write_failed = 1;
+    for (uint16_t i = 0; i < len; ++i) {
+        if (raw_write_sector[offset + i] != data[i]) {
+            raw_write_sector[offset + i] = data[i];
+            raw_write_dirty = 1;
+            msc_write_changed = 1;
+        }
     }
 }
 
-static void disk_fill_chunk(uint32_t lba, uint16_t offset, uint8_t *dst, uint16_t len) {
-    buf_zero(dst, len);
+static uint8_t disk_fill_chunk(uint32_t lba, uint16_t offset, uint8_t *dst, uint16_t len) {
     if (lba < msc_disk_sectors) {
         uint32_t addr = lba * (uint32_t)MSC_SECTOR_SIZE + offset;
-        (void)w25q_read(addr, dst, len);
+        return w25q_read(addr, dst, len);
     }
+    return 0;
 }
 
 static void msc_start_read10(uint32_t lba, uint16_t blocks, uint32_t host_len) {
@@ -1686,7 +1716,15 @@ static void msc_send_next_in(void) {
         if (n > msc_read_remaining) {
             n = (uint16_t)msc_read_remaining;
         }
-        disk_fill_chunk(msc_read_lba, msc_sector_pos, msc_small, n);
+        if (!disk_fill_chunk(msc_read_lba, msc_sector_pos, msc_small, n)) {
+            msc_set_sense(0x03, 0x11);
+            msc_residue += msc_read_remaining;
+            msc_read_remaining = 0;
+            msc_prepare_csw(MSC_CSW_FAIL, msc_residue);
+            // End the failed data phase before sending its status wrapper.
+            ep1_send_raw(0, 0);
+            return;
+        }
         ep1_send_raw(msc_small, n);
         msc_sector_pos = (uint16_t)(msc_sector_pos + n);
         if (msc_sector_pos >= MSC_SECTOR_SIZE) {
@@ -1842,6 +1880,7 @@ static void msc_handle_cbw(const uint8_t *cbw, uint16_t len) {
             raw_write_loaded = 0;
             raw_write_dirty = 0;
             raw_write_failed = 0;
+            msc_write_changed = 0;
             msc_state = MSC_DISCARD_OUT_DATA;
         } else {
             msc_start_small_in(0, ok ? MSC_CSW_OK : MSC_CSW_FAIL, 0);
@@ -1857,43 +1896,92 @@ static void msc_handle_cbw(const uint8_t *cbw, uint16_t len) {
 
 static void ep1_out(void) {
     uint16_t len = pma_get_rx_count(1);
-    if (len > sizeof(msc_small)) {
-        len = sizeof(msc_small);
+    if (len > sizeof(msc_out_packet)) {
+        len = sizeof(msc_out_packet);
     }
-    pma_read(USB_EP1_RX, msc_small, len);
+    ep_set_rx_stat(1, USB_STAT_NAK);
+    pma_read(USB_EP1_RX, msc_out_packet, len);
     ep_clear_rx_ctr(1);
+    msc_out_len = len;
+    msc_out_pos = 0;
+    msc_out_pending = 1;
+}
 
-    if (msc_state == MSC_DISCARD_OUT_DATA) {
-        uint32_t chunk_lba = msc_write_lba + (msc_write_pos / MSC_SECTOR_SIZE);
-        uint16_t chunk_off = (uint16_t)(msc_write_pos % MSC_SECTOR_SIZE);
-        if (msc_discard_status == MSC_CSW_OK) {
-            raw_write_chunk(chunk_lba, chunk_off, msc_small, len);
-        }
-        msc_write_pos += len;
-        msc_update_idle_ms = 0;
-        if (msc_discard_remaining > len) {
-            msc_discard_remaining -= len;
-        } else {
-            msc_discard_remaining = 0;
-            if (!raw_write_flush()) {
-                raw_write_failed = 1;
-            }
-            if (raw_write_failed) {
-                msc_discard_status = MSC_CSW_FAIL;
-                msc_set_sense(0x03, 0x0C);
-            } else if (msc_discard_status == MSC_CSW_OK) {
-                raw_update_scan_pending = 1;
-            }
-            msc_prepare_csw(msc_discard_status, 0);
-            msc_send_next_in();
-        }
-        ep_set_rx_stat(1, USB_STAT_VALID);
+static void msc_finish_write(void) {
+    if (raw_write_failed) {
+        msc_discard_status = MSC_CSW_FAIL;
+        msc_set_sense(0x03, 0x0C);
+    } else if (msc_discard_status == MSC_CSW_OK && msc_write_changed) {
+        raw_update_scan_pending = 1;
+    }
+    msc_prepare_csw(msc_discard_status, 0);
+    msc_send_next_in();
+}
+
+static void msc_start_sector_flush(void) {
+    if (!raw_write_dirty) return;
+    if (!w25q_write_sector_start(raw_write_lba * (uint32_t)MSC_SECTOR_SIZE, raw_write_sector)) {
+        raw_write_failed = 1;
+        raw_write_dirty = 0;
         return;
     }
-    if (msc_state == MSC_IDLE) {
-        msc_handle_cbw(msc_small, len);
+    raw_flush_epoch = msc_io_epoch;
+    raw_flush_pending = 1;
+}
+
+// One packet or one flash step per poll; OUT stays NAKed until its buffer is free.
+static void msc_storage_poll(void) {
+    uint32_t enabled = cdc_pause_usb_irq();
+    if (raw_flush_pending) {
+        w25q_write_status_t status = w25q_write_sector_poll();
+        if (status == W25Q_WRITE_BUSY) {
+            cdc_restore_usb_irq(enabled);
+            return;
+        }
+        raw_flush_pending = 0;
+        raw_write_dirty = 0;
+        msc_update_idle_ms = 0;
+        if (raw_flush_epoch != msc_io_epoch) {
+            raw_write_loaded = 0;
+        } else {
+            if (status != W25Q_WRITE_DONE) raw_write_failed = 1;
+            if (!msc_discard_remaining) msc_finish_write();
+        }
     }
-    ep_set_rx_stat(1, USB_STAT_VALID);
+    if (!usb_ready || !usb_configured) {
+        cdc_restore_usb_irq(enabled);
+        return;
+    }
+    if (msc_out_pending) {
+        if (msc_state == MSC_DISCARD_OUT_DATA) {
+            uint32_t lba = msc_write_lba + msc_write_pos / MSC_SECTOR_SIZE;
+            uint16_t offset = (uint16_t)(msc_write_pos % MSC_SECTOR_SIZE);
+            uint16_t len = min_u16((uint16_t)(msc_out_len - msc_out_pos), (uint16_t)(MSC_SECTOR_SIZE - offset));
+            if (!len || len > msc_discard_remaining) {
+                raw_write_failed = 1;
+                msc_out_pos = msc_out_len;
+                msc_discard_remaining = 0;
+            } else {
+                if (msc_discard_status == MSC_CSW_OK) {
+                    raw_write_chunk(lba, offset, &msc_out_packet[msc_out_pos], len);
+                }
+                msc_write_pos += len;
+                msc_out_pos = (uint16_t)(msc_out_pos + len);
+                msc_discard_remaining -= len;
+                msc_update_idle_ms = 0;
+                if ((uint16_t)(offset + len) == MSC_SECTOR_SIZE || !msc_discard_remaining) {
+                    msc_start_sector_flush();
+                }
+            }
+            if (!raw_flush_pending && !msc_discard_remaining) msc_finish_write();
+        } else {
+            if (msc_state == MSC_IDLE) msc_handle_cbw(msc_out_packet, msc_out_len);
+            msc_out_pos = msc_out_len;
+        }
+        if (msc_out_pos == msc_out_len) msc_out_pending = 0;
+    }
+    if (!msc_out_pending && !raw_flush_pending) ep_set_rx_stat(1, USB_STAT_VALID);
+    cdc_restore_usb_irq(enabled);
 }
 
 static void ep1_in(void) {
@@ -1925,6 +2013,22 @@ static void cdc_restore_usb_irq(uint32_t enabled) {
     if (enabled) {
         REG32(NVIC_ISER0) = enabled;
     }
+}
+
+static void usb_link_poll(void) {
+    uint32_t enabled = cdc_pause_usb_irq();
+    uint16_t frame = USB_FNR & 0x07FFu;
+    uint32_t now = board_cycle_counter_read();
+    if (frame != usb_last_frame) {
+        usb_last_frame = frame;
+        usb_last_frame_ticks = now;
+        usb_suspended = 0;
+    } else if ((uint32_t)(now - usb_last_frame_ticks) >= USB_LINK_QUIET_CYCLES) {
+        // No VBUS input is available: an advancing SOF frame is our host link.
+        // Preserve SET_CONFIGURATION so host suspend/resume does not lose it.
+        usb_suspended = 1;
+    }
+    cdc_restore_usb_irq(enabled);
 }
 
 // Returns the text after `prefix`, or 0 when `cmd` does not start with it.
@@ -2139,7 +2243,7 @@ static void cdc_poll_command(void) {
 }
 
 static void cdc_pump_tx(void) {
-    if (!usb_configured || cdc_tx_busy) {
+    if (!usb_cdc_is_configured() || cdc_tx_busy) {
         return;
     }
     if (cdc_tx_head == cdc_tx_tail) {
@@ -2165,7 +2269,7 @@ static void cdc_tx_complete(void) {
 }
 
 void usb_cdc_send_bytes(const uint8_t *data, uint16_t len) {
-    if (!usb_configured) {
+    if (!usb_cdc_is_configured()) {
         return;
     }
     uint32_t irq = cdc_pause_usb_irq();
@@ -2202,7 +2306,7 @@ void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8
 }
 
 uint8_t usb_cdc_is_configured(void) {
-    return usb_configured;
+    return usb_configured && !usb_suspended;
 }
 
 
@@ -2219,7 +2323,7 @@ static void usb_handle_setup(const uint8_t *setup) {
             msc_small[0] = 0;
             ep0_send(msc_small, 1, len);
         } else if (req == 0xFF) {
-            msc_state = MSC_IDLE;
+            msc_abort_transfer();
             ep0_send_zlp();
         } else if (req == 0x20) {
             if (len > 0) {
@@ -2270,12 +2374,15 @@ static void usb_handle_setup(const uint8_t *setup) {
         break;
     case 0x09:
         usb_configured = (uint8_t)value;
+        usb_suspended = 0;
+        usb_last_frame = USB_FNR & 0x07FFu;
+        usb_last_frame_ticks = board_cycle_counter_read();
         ep_set_type(1, USB_EP_TYPE_BULK);
         pma_set_tx(1, USB_EP1_TX, 0);
         pma_set_rx(1, USB_EP1_RX, USB_EP1_SIZE);
         ep_set_tx_stat(1, USB_STAT_NAK);
         ep_set_rx_stat(1, USB_STAT_VALID);
-        msc_state = MSC_IDLE;
+        msc_abort_transfer();
         ep_set_type(2, USB_EP_TYPE_INTERRUPT);
         pma_set_tx(2, USB_EP2_TX, 0);
         ep_set_tx_stat(2, USB_STAT_NAK);
@@ -2372,7 +2479,8 @@ static void usb_reset_core(void) {
     ep0_state = EP0_IDLE;
     ep0_address_pending = 0;
     usb_configured = 0;
-    msc_state = MSC_IDLE;
+    usb_suspended = 1;
+    msc_abort_transfer();
     msc_set_sense(0, 0);
 
     cdc_tx_head = 0;
@@ -2440,17 +2548,21 @@ void usb_msc_set_enabled(uint8_t enabled) {
     RCC_APB2ENR &= ~(1u << 22);
     usb_ready = 0;
     usb_configured = 0;
+    usb_suspended = 1;
     cdc_rx_pending = 0;
-    msc_state = MSC_IDLE;
+    msc_abort_transfer();
 }
 
 void usb_msc_poll(void) {
     fw_update_status_t status;
 
+    msc_storage_poll();
     if (!usb_ready) {
         return;
     }
+    usb_link_poll();
     cdc_poll_command();
+    if (msc_out_pending || raw_flush_pending) return;
 
     if (raw_update_scan_pending && !raw_update_streaming && !msc_update_candidate) {
         if (msc_update_idle_ms < MSC_UPDATE_IDLE_APPLY_MS) {
@@ -2506,7 +2618,8 @@ void USB_LP_CAN1_RX0_IRQHandler(void) {
     if (!usb_ready) {
         return;
     }
-    while ((istr = USB_ISTR) & (USB_ISTR_CTR | USB_ISTR_RESET | USB_ISTR_SUSP | USB_ISTR_WKUP)) {
+    uint8_t budget = 8;
+    while (budget-- && ((istr = USB_ISTR) & (USB_ISTR_CTR | USB_ISTR_RESET | USB_ISTR_SUSP | USB_ISTR_WKUP))) {
         if (istr & USB_ISTR_RESET) {
             USB_ISTR = (uint16_t)~USB_ISTR_RESET;
             usb_reset_core();
@@ -2514,9 +2627,13 @@ void USB_LP_CAN1_RX0_IRQHandler(void) {
         }
         if (istr & USB_ISTR_SUSP) {
             USB_ISTR = (uint16_t)~USB_ISTR_SUSP;
+            usb_suspended = 1;
         }
         if (istr & USB_ISTR_WKUP) {
             USB_ISTR = (uint16_t)~USB_ISTR_WKUP;
+            usb_suspended = 0;
+            usb_last_frame = USB_FNR & 0x07FFu;
+            usb_last_frame_ticks = board_cycle_counter_read();
         }
         if (istr & USB_ISTR_CTR) {
             uint8_t ep = (uint8_t)(istr & 0x0Fu);

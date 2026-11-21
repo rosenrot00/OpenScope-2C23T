@@ -13,7 +13,9 @@ enum {
     W25Q_SECTOR_SIZE = 4096,
     W25Q_PAGE_SIZE = 256,
     SPI_TIMEOUT = 60000u,
-    W25Q_WRITE_TIMEOUT = 5000000u,
+    // Cycle budgets remain conservative across the supported processor clocks.
+    W25Q_ERASE_TIMEOUT_CYCLES = 288000000u,
+    W25Q_PAGE_TIMEOUT_CYCLES = 28800000u,
 };
 
 #ifndef W25Q_SPI_BR
@@ -23,6 +25,19 @@ enum {
 static uint8_t w25q_ready;
 static uint16_t w25q_id;
 static uint32_t w25q_capacity;
+
+enum W25qWritePhase {
+    W25Q_WAIT_INITIAL,
+    W25Q_WAIT_ERASE,
+    W25Q_WAIT_PAGE,
+};
+
+static volatile w25q_write_status_t write_status;
+static enum W25qWritePhase write_phase;
+static const uint8_t *write_source;
+static uint32_t write_address;
+static uint32_t write_wait_start;
+static uint16_t write_offset;
 
 static void w25q_select(void) {
     gpio_clear(GPIOB_BASE, W25Q_CS_PIN);
@@ -76,21 +91,6 @@ static uint8_t w25q_read_status(uint8_t *status) {
     return 1;
 }
 
-static uint8_t w25q_wait_ready(void) {
-    uint8_t status = 0;
-    uint32_t timeout = W25Q_WRITE_TIMEOUT;
-
-    do {
-        if (!w25q_read_status(&status)) {
-            return 0;
-        }
-        if (!(status & 1u)) {
-            return 1;
-        }
-    } while (--timeout);
-    return 0;
-}
-
 static uint8_t w25q_write_enable(void) {
     w25q_select();
     if (!spi2_write(0x06u)) {
@@ -101,8 +101,8 @@ static uint8_t w25q_write_enable(void) {
     return 1;
 }
 
-static uint8_t w25q_erase_sector(uint32_t addr) {
-    if (!w25q_wait_ready() || !w25q_write_enable()) {
+static uint8_t w25q_erase_sector_start(uint32_t addr) {
+    if (!w25q_write_enable()) {
         return 0;
     }
     w25q_select();
@@ -114,11 +114,11 @@ static uint8_t w25q_erase_sector(uint32_t addr) {
         return 0;
     }
     w25q_deselect();
-    return w25q_wait_ready();
+    return 1;
 }
 
-static uint8_t w25q_page_program(uint32_t addr, const uint8_t *src, uint16_t len) {
-    if (!w25q_wait_ready() || !w25q_write_enable()) {
+static uint8_t w25q_page_program_start(uint32_t addr, const uint8_t *src) {
+    if (!w25q_write_enable()) {
         return 0;
     }
     w25q_select();
@@ -129,14 +129,14 @@ static uint8_t w25q_page_program(uint32_t addr, const uint8_t *src, uint16_t len
         w25q_deselect();
         return 0;
     }
-    for (uint16_t i = 0; i < len; ++i) {
+    for (uint16_t i = 0; i < W25Q_PAGE_SIZE; ++i) {
         if (!spi2_write(src[i])) {
             w25q_deselect();
             return 0;
         }
     }
     w25q_deselect();
-    return w25q_wait_ready();
+    return 1;
 }
 
 static uint16_t w25q_read_id90(void) {
@@ -198,8 +198,13 @@ uint16_t w25q_device_id(void) {
 }
 
 uint8_t w25q_read(uint32_t addr, uint8_t *dst, uint16_t len) {
-    if (!w25q_capacity || !dst || addr > w25q_capacity ||
+    uint8_t status;
+    if (w25q_write_sector_busy() || !w25q_capacity || !dst || addr > w25q_capacity ||
         (uint32_t)len > w25q_capacity - addr) {
+        return 0;
+    }
+    // A failed command can still have started a physical erase/program.
+    if (!w25q_read_status(&status) || (status & 1u)) {
         return 0;
     }
 
@@ -221,26 +226,89 @@ uint8_t w25q_read(uint32_t addr, uint8_t *dst, uint16_t len) {
     return 1;
 }
 
-uint8_t w25q_write_sector(uint32_t sector_addr, const uint8_t *src) {
-    if (!w25q_capacity || !src ||
+static w25q_write_status_t w25q_write_finish(w25q_write_status_t status) {
+    write_source = 0;
+    write_status = status;
+    return status;
+}
+
+uint8_t w25q_write_sector_start(uint32_t sector_addr, const uint8_t *src) {
+    if (w25q_write_sector_busy()) {
+        return 0;
+    }
+    if (w25q_capacity < W25Q_SECTOR_SIZE || !src ||
         (sector_addr & (W25Q_SECTOR_SIZE - 1u)) != 0 ||
         sector_addr > w25q_capacity - W25Q_SECTOR_SIZE) {
+        (void)w25q_write_finish(W25Q_WRITE_ERROR);
         return 0;
     }
-    if (!w25q_erase_sector(sector_addr)) {
-        return 0;
+
+    write_source = src;
+    write_address = sector_addr;
+    write_offset = 0;
+    write_phase = W25Q_WAIT_INITIAL;
+    write_wait_start = board_cycle_counter_read();
+    write_status = W25Q_WRITE_BUSY;
+    return 1;
+}
+
+w25q_write_status_t w25q_write_sector_poll(void) {
+    uint8_t status;
+    if (!w25q_write_sector_busy()) {
+        return write_status;
     }
-    for (uint16_t off = 0; off < W25Q_SECTOR_SIZE; off = (uint16_t)(off + W25Q_PAGE_SIZE)) {
+    if (!w25q_read_status(&status)) {
+        return w25q_write_finish(W25Q_WRITE_ERROR);
+    }
+    if (status & 1u) {
+        uint32_t budget = write_phase == W25Q_WAIT_PAGE ?
+            W25Q_PAGE_TIMEOUT_CYCLES : W25Q_ERASE_TIMEOUT_CYCLES;
+        if ((uint32_t)(board_cycle_counter_read() - write_wait_start) >= budget) {
+            return w25q_write_finish(W25Q_WRITE_ERROR);
+        }
+        return W25Q_WRITE_BUSY;
+    }
+
+    if (write_phase == W25Q_WAIT_INITIAL) {
+        if (!w25q_erase_sector_start(write_address)) {
+            return w25q_write_finish(W25Q_WRITE_ERROR);
+        }
+        write_phase = W25Q_WAIT_ERASE;
+        write_wait_start = board_cycle_counter_read();
+        return W25Q_WRITE_BUSY;
+    }
+
+    while (write_offset < W25Q_SECTOR_SIZE) {
+        uint16_t offset = write_offset;
         uint8_t non_empty = 0;
         for (uint16_t i = 0; i < W25Q_PAGE_SIZE; ++i) {
-            if (src[off + i] != 0xFFu) {
+            if (write_source[offset + i] != 0xFFu) {
                 non_empty = 1;
                 break;
             }
         }
-        if (non_empty && !w25q_page_program(sector_addr + off, &src[off], W25Q_PAGE_SIZE)) {
-            return 0;
+        write_offset = (uint16_t)(write_offset + W25Q_PAGE_SIZE);
+        if (non_empty) {
+            if (!w25q_page_program_start(write_address + offset, write_source + offset)) {
+                return w25q_write_finish(W25Q_WRITE_ERROR);
+            }
+            write_phase = W25Q_WAIT_PAGE;
+            write_wait_start = board_cycle_counter_read();
+            return W25Q_WRITE_BUSY;
         }
     }
-    return 1;
+    return w25q_write_finish(W25Q_WRITE_DONE);
+}
+
+uint8_t w25q_write_sector_busy(void) {
+    return write_status == W25Q_WRITE_BUSY;
+}
+
+uint8_t w25q_write_sector(uint32_t sector_addr, const uint8_t *src) {
+    if (!w25q_write_sector_start(sector_addr, src)) {
+        return 0;
+    }
+    while (w25q_write_sector_poll() == W25Q_WRITE_BUSY) {
+    }
+    return write_status == W25Q_WRITE_DONE;
 }
