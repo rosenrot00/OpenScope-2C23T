@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -134,43 +135,98 @@ static void test_no_manual_range_badge(void) {
     assert(!memcmp(previous_frame, frame_buffer, sizeof(previous_frame)));
 }
 
+// Bounding box of the pixels in one key that differ from the key's fill.
+typedef struct { int16_t x0, y0, x1, y1; uint16_t fg_pixels; } key_ink_t;
+
+static key_ink_t key_ink(uint16_t key_x, uint16_t fill, uint16_t fg, int16_t from_x, int16_t to_x) {
+    key_ink_t k = {32767, 32767, -1, -1, 0};
+    for (int16_t y = DMM_KEYS_Y + 1; y < DMM_KEYS_Y + DMM_KEYS_H - 1; ++y) {
+        for (int16_t x = (int16_t)(key_x + from_x); x <= (int16_t)(key_x + to_x); ++x) {
+            uint16_t c = frame_buffer[y * LCD_WIDTH + x];
+            if (c == fill) continue;
+            if (x < k.x0) k.x0 = x;
+            if (x > k.x1) k.x1 = x;
+            if (y < k.y0) k.y0 = y;
+            if (y > k.y1) k.y1 = y;
+            k.fg_pixels = (uint16_t)(k.fg_pixels + (c == fg));
+        }
+    }
+    return k;
+}
+
 static void test_dmm_softkeys(void) {
-    enum { TEST_X = 9 + 77, CENTER_Y = DMM_KEYS_Y + 13 };
+    enum { KEY_W = 71, TEST_X = 9 + 77, CENTER_Y = DMM_KEYS_Y + 13 };
+    key_ink_t k;
     ui.mode = UI_MODE_DMM;
     ui.overlay = UI_OVERLAY_NONE;
     dmm_valid = 0;
     dmm_hold_active = dmm_rel_active = 0;
     dmm_group_choice[DMM_GROUP_TEST] = 0;
+
+    // Diode + continuity, selected: drawn in the text colour on the accent,
+    // centred in the key.
     ui.dmm_mode = DMM_MODE_DIODE;
     render(UI_RENDER_FULL);
     assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + TEST_X + 35] == D_ACCENT);
-    assert(frame_buffer[CENTER_Y * LCD_WIDTH + TEST_X + 41] == D_BG); // Sound mark.
-    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 51] == D_BG); // Outer arc.
-    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 52] == D_BG);
-    assert(frame_buffer[CENTER_Y * LCD_WIDTH + TEST_X + 52] == D_ACCENT); // Gap between arcs.
-    assert(frame_buffer[(CENTER_Y - 4) * LCD_WIDTH + TEST_X + 31] == D_BG); // Diode cathode.
+    k = key_ink(TEST_X, D_ACCENT, D_BG, 6, KEY_W - 7);
+    assert(k.fg_pixels > 40);
+    assert(abs((k.x0 + k.x1) - (2 * TEST_X + KEY_W - 1)) <= 3);
+    assert(abs((k.y0 + k.y1) - 2 * CENTER_Y) <= 3);
+
+    // Capacitor: two separate plates on the symbol's middle row.
     ui.dmm_mode = DMM_MODE_CAP;
     dmm_group_choice[DMM_GROUP_TEST] = 1;
     render(UI_RENDER_LOCAL_CHANGE);
-    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 33] == D_BG); // Capacitor plate.
-    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 34] == D_BG);
-    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 35] == D_ACCENT); // Gap between plates.
-    assert(frame_buffer[(CENTER_Y - 6) * LCD_WIDTH + TEST_X + 51] == D_ACCENT);
+    k = key_ink(TEST_X, D_ACCENT, D_BG, 6, KEY_W - 7);
+    assert(abs((k.x0 + k.x1) - (2 * TEST_X + KEY_W - 1)) <= 3);
+    {
+        uint8_t runs = 0, in_run = 0;
+        int16_t y = (int16_t)(CENTER_Y - 4);
+        for (int16_t x = k.x0; x <= k.x1; ++x) {
+            uint8_t ink = frame_buffer[y * LCD_WIDTH + x] == D_BG;
+            runs = (uint8_t)(runs + (ink && !in_run));
+            in_run = ink;
+        }
+        assert(runs == 2);
+    }
+
+    // Not selected: fill and text colour swap; a reading update leaves the
+    // keys untouched.
     ui.dmm_mode = DMM_MODE_AUTO;
     render(UI_RENDER_LOCAL_CHANGE);
     assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + 44] == D_ACCENT);
     assert(frame_buffer[(DMM_KEYS_Y + 2) * LCD_WIDTH + TEST_X + 35] == D_CARD);
-    assert(frame_buffer[(CENTER_Y - 5) * LCD_WIDTH + TEST_X + 33] == D_SUB);
+    assert(key_ink(TEST_X, D_CARD, D_SUB, 6, KEY_W - 7).fg_pixels > 20);
     render(UI_RENDER_DMM_READING);
     assert(!memcmp(previous_frame + (DMM_KEYS_Y - 2) * LCD_WIDTH,
                    frame_buffer + (DMM_KEYS_Y - 2) * LCD_WIDTH,
                    (LCD_HEIGHT - DMM_KEYS_Y + 2) * LCD_WIDTH * sizeof(*frame_buffer)));
 
+    // AC volts: the wave sits beside the V, centred on the capital letter,
+    // with a stroke at least two pixels thick.
     ui.dmm_mode = DMM_MODE_ACV;
     render(UI_RENDER_LOCAL_CHANGE);
-    uint16_t wave_x = 9u + (71u - 19u + gfx_text_width(&font_medium, "V")) / 2u + 6u;
-    assert(frame_buffer[(CENTER_Y + 1) * LCD_WIDTH + wave_x] == D_BG);
-    assert(frame_buffer[(CENTER_Y + 2) * LCD_WIDTH + wave_x] == D_BG); // Two-pixel AC stroke.
+    {
+        enum { V_KEY_X = 9 };
+        int16_t v_w = (int16_t)gfx_text_width(&font_medium, "V");
+        key_ink_t all = key_ink(V_KEY_X, D_ACCENT, D_BG, 6, KEY_W - 7);
+        key_ink_t letter = key_ink(V_KEY_X, D_ACCENT, D_BG, all.x0 - V_KEY_X, all.x0 - V_KEY_X + v_w - 2);
+        key_ink_t wave = key_ink(V_KEY_X, D_ACCENT, D_BG, all.x0 - V_KEY_X + v_w + 2, KEY_W - 7);
+        uint8_t thick = 0;
+        assert(wave.fg_pixels > 10);
+        assert(abs((wave.y0 + wave.y1) - (letter.y0 + letter.y1)) <= 2);
+        // The label as a whole sits in the middle of the pill.
+        assert(abs((letter.y0 + letter.y1) - (2 * DMM_KEYS_Y + DMM_KEYS_H - 1)) <= 1);
+        for (int16_t x = wave.x0; x <= wave.x1 && !thick; ++x) {
+            for (int16_t y = wave.y0; y < wave.y1; ++y) {
+                if (frame_buffer[y * LCD_WIDTH + x] == D_BG && frame_buffer[(y + 1) * LCD_WIDTH + x] == D_BG) {
+                    thick = 1;
+                    break;
+                }
+            }
+        }
+        assert(thick);
+    }
 }
 
 static void test_partial_headers(void) {

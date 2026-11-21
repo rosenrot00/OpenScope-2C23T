@@ -32,3 +32,7 @@
 #define ICON_EDGE_FALL_SM "\xEE\x80\x9B"
 #define ICON_SCOPE_SM "\xEE\x80\x9C"
 #define ICON_GENERATOR_SM "\xEE\x80\x9D"
+#define ICON_KEY_DC "\xEE\x80\x9E"
+#define ICON_KEY_AC "\xEE\x80\x9F"
+#define ICON_KEY_DIODE_CONT "\xEE\x80\xA0"
+#define ICON_KEY_CAP "\xEE\x80\xA1"
