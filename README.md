@@ -32,7 +32,8 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Multimeter screen** with a large reading, a bar graph against the meter's current range (centred on zero in REL mode), a MIN / AVG / MAX row, and a dedicated live-wire card.
 - **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display, and clearer scale/readout handling.
 - **Runtime USB mass storage** while the device is running.
-- **USB serial telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
+- **USB serial (CDC) telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
+  The community-developed Windows companion [FNIRSI 2C23T Studio](https://github.com/Daddelgreis74/fnirsi-2c23t-studio) uses this interface for live measurements, data logging, remote controls, and screenshots.
 - **In-app firmware update** by copying a matching `F2C23T*.bin` file to the exposed USB storage.
 - **Screenshot capture** to the device storage by long-pressing `SAVE` (saved as `IMG_NN.BMP`), with the USB `SHOT` command and remote button presses via `KEY:<NAME>`.
 - **Read-only bootloader export** from Settings, with hardware-specific backups and CRC32 metadata.
