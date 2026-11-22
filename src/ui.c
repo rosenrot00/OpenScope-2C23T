@@ -4131,70 +4131,44 @@ static void draw_dmm_immersive_panel(void) {
     dmm_draw_stats();
 }
 
-static void dmm_draw_electrical_mark(int16_t x, int16_t y, uint8_t ac, uint16_t fg) {
-    if (ac) {
-        static const int8_t wave_y[] = {1, 0, -1, -2, -2, -1, 0, 1, 2, 2, 1, 0, -1};
-        for (uint8_t i = 0; i < sizeof(wave_y); ++i) {
-            lcd_rect(x + i, y + wave_y[i], 1, 2, fg);
-        }
-    } else {
-        lcd_rect(x, y - 3, 13, 2, fg);
-        for (uint8_t i = 0; i < 3u; ++i) lcd_rect(x + 5 * i, y + 2, 3, 2, fg);
-    }
-}
-
-static void dmm_draw_test_mark(int16_t x, int16_t y, uint8_t diode, uint16_t fg) {
-    int16_t left = diode ? 5 : 7;
-    int16_t right = diode ? 13 : 12;
-    lcd_rect(x, y, left + 1, 2, fg);
-    lcd_rect(x + left, y - 5, 2, 12, fg);
-    lcd_rect(x + right, y - 5, 2, 12, fg);
-    lcd_rect(x + right, y, 19 - right, 2, fg);
-    if (!diode) return;
-
-    for (int16_t row = 0; row < 2; ++row) {
-        lcd_line(x + 5, y - 5 + row, x + 12, y + row, fg);
-        lcd_line(x + 5, y + 5 + row, x + 12, y + row, fg);
-    }
-
-    // The printed continuity mark has sound arcs but no speaker cone.
-    x += 24;
-    lcd_rect(x, y, 2, 2, fg);
-    for (uint8_t i = 0; i < 3u; ++i) {
-        int16_t arc_x = (int16_t)(x + 4 + 3 * i);
-        int16_t h = (int16_t)(2 + 2 * i);
-        int16_t inset = i ? 2 : 1;
-        lcd_rect(arc_x + inset, y - h / 2, 2, h + 1, fg);
-        for (int16_t col = 0; col < 2; ++col) {
-            lcd_line(arc_x + col, y - h, arc_x + col + inset, y - h / 2, fg);
-            lcd_line(arc_x + col + inset, y + h / 2, arc_x + col, y + h, fg);
-        }
-    }
-}
-
 static void dmm_draw_softkey_label(uint8_t mode, int16_t x, uint16_t fg, uint16_t fill) {
-    enum { W = 71, TEXT_Y = DMM_KEYS_Y + 4, CENTER_Y = DMM_KEYS_Y + 13 };
+    // Smooth versions of the symbols printed on the device's keys, from
+    // font_icons. Unit marks sit centred on the capital letters beside them.
+    enum {
+        W = 71,
+        // Capitals (2 px below the text top, 11 px tall) centred in the
+        // 26 px pill: rows 7..17 of 0..25.
+        TEXT_Y = DMM_KEYS_Y + 5,
+        CAP_MID_X2 = 2 * (TEXT_Y + 2) + 11, // twice the capitals' centre (top 2 px, 11 px tall)
+        CENTER_Y = DMM_KEYS_Y + 13,
+        MARK_H = 11,
+        MARK_GAP = 5,
+        TEST_H = 20,
+        CAP_H = 19,
+    };
     const char *text;
-    uint8_t ac;
+    const char *mark;
     switch (mode) {
     case DMM_MODE_DCV:
     case DMM_MODE_ACV:
         text = "V";
-        ac = mode == DMM_MODE_ACV;
+        mark = mode == DMM_MODE_ACV ? ICON_KEY_AC : ICON_KEY_DC;
         break;
     case DMM_MODE_AC_HI_CURR:
     case DMM_MODE_DC_HI_CURR:
     case DMM_MODE_AC_LO_CURR:
     case DMM_MODE_DC_LO_CURR:
         text = (mode == DMM_MODE_AC_LO_CURR || mode == DMM_MODE_DC_LO_CURR) ? "mA" : "A";
-        ac = mode == DMM_MODE_AC_HI_CURR || mode == DMM_MODE_AC_LO_CURR;
+        mark = (mode == DMM_MODE_AC_HI_CURR || mode == DMM_MODE_AC_LO_CURR) ? ICON_KEY_AC : ICON_KEY_DC;
         break;
     case DMM_MODE_DIODE:
     case DMM_MODE_CONT:
-        dmm_draw_test_mark(x + 17, CENTER_Y, 1, fg);
+        gfx_text((int16_t)(x + (W - (int16_t)gfx_text_width(&font_icons, ICON_KEY_DIODE_CONT)) / 2),
+                 (int16_t)(CENTER_Y - TEST_H / 2), &font_icons, ICON_KEY_DIODE_CONT, fg, fill);
         return;
     case DMM_MODE_CAP:
-        dmm_draw_test_mark(x + 26, CENTER_Y, 0, fg);
+        gfx_text((int16_t)(x + (W - (int16_t)gfx_text_width(&font_icons, ICON_KEY_CAP)) / 2),
+                 (int16_t)(CENTER_Y - CAP_H / 2), &font_icons, ICON_KEY_CAP, fg, fill);
         return;
     default:
         if (mode == DMM_MODE_RES) text = "\xCE\xA9";
@@ -4205,9 +4179,9 @@ static void dmm_draw_softkey_label(uint8_t mode, int16_t x, uint16_t fg, uint16_
         gfx_text_center(x, TEXT_Y, W, &font_medium, text, fg, fill);
         return;
     }
-    int16_t left = (int16_t)(x + (W - 19 - (int16_t)gfx_text_width(&font_medium, text)) / 2);
-    int16_t end = gfx_text(left, TEXT_Y, &font_medium, text, fg, fill);
-    dmm_draw_electrical_mark(end + 6, CENTER_Y, ac, fg);
+    int16_t total = (int16_t)(gfx_text_width(&font_medium, text) + MARK_GAP + gfx_text_width(&font_icons, mark));
+    int16_t end = gfx_text((int16_t)(x + (W - total) / 2), TEXT_Y, &font_medium, text, fg, fill);
+    gfx_text((int16_t)(end + MARK_GAP), (int16_t)((CAP_MID_X2 - MARK_H + 1) / 2), &font_icons, mark, fg, fill);
 }
 
 static void draw_dmm_softkeys(void) {
