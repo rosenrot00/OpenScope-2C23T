@@ -2155,7 +2155,9 @@ static void handle_cdc_rx_command(const char *cmd) {
             else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
             else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
             else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
+            else if (m[0] == 'L' && m[1] == 'I' && m[2] == 'V') ui_set_dmm_mode(6);
             else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
+            else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M' && m[3] == 'P' && m[4] == 'F') ui_set_dmm_mode(13);
             else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
             else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
             else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);

@@ -14,6 +14,7 @@ uint8_t ui_diode_beep_enabled(void);
 uint8_t ui_live_beep_enabled(void);
 void ui_set_live_wire_detected(uint8_t detected);
 void ui_set_dmm_mode(uint8_t mode);
+void ui_dmm_send_usb_telemetry(void);
 void ui_set_main_mode(uint8_t mode);
 void ui_scope_set_running(uint8_t run);
 void ui_scope_trigger_auto(void);
