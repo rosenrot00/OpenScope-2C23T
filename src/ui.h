@@ -30,3 +30,4 @@ uint8_t ui_gen_is_running(void);
 uint32_t ui_gen_frequency(void);
 uint8_t ui_gen_wave(void);
 uint8_t ui_gen_amplitude(void);
+const char *ui_firmware_version(void);

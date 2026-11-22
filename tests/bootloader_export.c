@@ -108,6 +108,7 @@ void ui_gen_set_wave(uint8_t wave) { (void)wave; }
 void ui_gen_set_amplitude(uint8_t tenths_v) { (void)tenths_v; }
 void ui_gen_set_duty(uint8_t duty_percent) { (void)duty_percent; }
 uint8_t ui_gen_is_running(void) { return 0; }
+const char *ui_firmware_version(void) { return "v0.0.0-test"; }
 uint32_t ui_gen_frequency(void) { return remote_freq; }
 uint8_t ui_gen_wave(void) { return 0; }
 uint8_t ui_gen_amplitude(void) { return 33; }

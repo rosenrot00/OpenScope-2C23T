@@ -203,6 +203,19 @@ on, and the update dialog says why:
 | `FLASH WRITE FAILED` | A staged halfword did not read back. |
 | `TRANSFER INCOMPLETE` | The host left a 512-byte sector half written. |
 
+The running firmware and the state of the last update can also be read over the
+USB serial port:
+
+```
+VER?  ->  $VER,v2026.11.6,HW4.0
+UPD?  ->  $UPD,<state>,<error>,<bytes staged>,<expected size>
+```
+
+`<state>` is 0 idle, 1 staging, 2 ready, 3 error, 4 applying; `<error>` is 0
+none, 1 too large, 2 bad vectors, 3 flash write failed, 4 transfer incomplete.
+This is the only way to confirm which firmware is running on a device whose
+keypad cannot be reached.
+
 ## Hardware Versions
 
 There are at least two hardware variants:

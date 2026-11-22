@@ -1,5 +1,6 @@
 #include "usb_msc.h"
 
+#include "app_config.h"
 #include "board.h"
 #include "bootloader.h"
 #include "fw_update.h"
@@ -2106,6 +2107,46 @@ static void cdc_send_gen_state(void) {
     usb_cdc_send_bytes((const uint8_t *)buf, pos);
 }
 
+// What is running, and how the last in-app update went. With the keypad off
+// the device the About screen is out of reach, so this is the only way to
+// confirm that an update actually replaced the firmware.
+static void cdc_send_identity(void) {
+    char buf[64];
+    uint16_t pos = 0;
+    const char *parts[3] = {"$VER,", ui_firmware_version(), "," HW_TARGET_NAME};
+
+    for (uint8_t i = 0; i < 3u; ++i) {
+        const char *text = parts[i];
+        while (*text && pos < (uint16_t)(sizeof(buf) - 2u)) {
+            buf[pos++] = *text++;
+        }
+    }
+    buf[pos++] = '\r';
+    buf[pos++] = '\n';
+    usb_cdc_send_bytes((const uint8_t *)buf, pos);
+}
+
+static void cdc_send_update_state(void) {
+    // "$UPD," plus four 32-bit decimals, three commas and CRLF.
+    char buf[64];
+    uint16_t pos = 0;
+    const char *prefix = "$UPD,";
+    fw_update_status_t status;
+
+    fw_update_status(&status);
+    while (*prefix) buf[pos++] = *prefix++;
+    pos = cdc_append_u32(buf, pos, status.state);
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, status.error);
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, status.bytes);
+    buf[pos++] = ',';
+    pos = cdc_append_u32(buf, pos, status.expected_size);
+    buf[pos++] = '\r';
+    buf[pos++] = '\n';
+    usb_cdc_send_bytes((const uint8_t *)buf, pos);
+}
+
 // Handles GEN:* commands. Returns 1 when the command was consumed.
 static uint8_t handle_cdc_gen_command(const char *cmd) {
     const char *arg;
@@ -2187,6 +2228,12 @@ static void handle_cdc_rx_command(const char *cmd) {
                 break;
             }
         }
+    } else if ((arg = cdc_match_prefix(cmd, "VER?")) != 0 && cdc_command_end(arg)) {
+        // Replies $VER,<version>,<hardware>
+        cdc_send_identity();
+    } else if ((arg = cdc_match_prefix(cmd, "UPD?")) != 0 && cdc_command_end(arg)) {
+        // Replies $UPD,<state>,<error>,<bytes staged>,<expected size>
+        cdc_send_update_state();
     } else if ((arg = cdc_match_prefix(cmd, "SHOT")) != 0 && cdc_command_end(arg)) {
         // Saves the current screen as IMG_NN.BMP on the USB drive. The reply
         // ($SHOT,OK or $SHOT,ERR) is sent once the file has been written.
