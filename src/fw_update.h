@@ -14,6 +14,13 @@ enum {
     FW_UPDATE_ERR_NONE,
     FW_UPDATE_ERR_RANGE,
     FW_UPDATE_ERR_VECTOR,
+    // A staged halfword did not read back: the flash refused the write, or it
+    // was aimed at the wrong flash bank's registers.
+    FW_UPDATE_ERR_FLASH,
+    // A 512-byte sector was left half filled when the next one started. A
+    // sector reaches flash whole or not at all, so this is reported instead
+    // of staging a short image that would flash and never boot.
+    FW_UPDATE_ERR_ORDER,
 };
 
 typedef struct {

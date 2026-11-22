@@ -1019,6 +1019,12 @@ static const char *fw_update_status_text(const fw_update_status_t *status) {
         if (status->error == FW_UPDATE_ERR_RANGE) {
             return "FILE TOO LARGE";
         }
+        if (status->error == FW_UPDATE_ERR_FLASH) {
+            return "FLASH WRITE FAILED";
+        }
+        if (status->error == FW_UPDATE_ERR_ORDER) {
+            return "TRANSFER INCOMPLETE";
+        }
         return "UPDATE ERROR";
     }
     return "";

@@ -84,6 +84,7 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4 \
                   $(BUILD_ROOT)/tests/ui_render-old $(BUILD_ROOT)/tests/ui_render-hw4 \
                   $(BUILD_ROOT)/tests/gfx \
+                  $(BUILD_ROOT)/tests/fw_update-old $(BUILD_ROOT)/tests/fw_update-hw4 \
                   $(BUILD_ROOT)/tests/w25q-old $(BUILD_ROOT)/tests/w25q-hw4
 
 .PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test preview screenshots
@@ -107,6 +108,8 @@ test: $(HOST_TEST_BINS)
 	$(BUILD_ROOT)/tests/generator-hw4
 	$(BUILD_ROOT)/tests/fpga_timing-old
 	$(BUILD_ROOT)/tests/fpga_timing-hw4
+	$(BUILD_ROOT)/tests/fw_update-old
+	$(BUILD_ROOT)/tests/fw_update-hw4
 	$(BUILD_ROOT)/tests/ui_render-old
 	$(BUILD_ROOT)/tests/ui_render-hw4
 	$(BUILD_ROOT)/tests/gfx
@@ -128,6 +131,10 @@ $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4: tests/gener
 $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4: tests/fpga_timing.c src/fpga.c src/fpga.h src/hw.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< $(HOST_TEST_LINK) -o $@
+
+$(BUILD_ROOT)/tests/fw_update-old $(BUILD_ROOT)/tests/fw_update-hw4: tests/fw_update.c src/fw_update.c src/fw_update.h src/app_config.h src/hw.h
+	@mkdir -p $(dir $@)
+	$(CLANG) $(HOST_TEST_FLAGS) $(if $(filter %-hw4,$@),-DAPP_BASE_ADDR=0x08007000u -DAPP_FLASH_SIZE_BYTES=0x00079000u -DFW_STAGE_BASE_ADDR=0x08080000u,) $< $(HOST_TEST_LINK) -o $@
 
 $(BUILD_ROOT)/tests/dmm-old $(BUILD_ROOT)/tests/dmm-hw4: tests/dmm.c src/dmm.c src/dmm.h src/ui.c src/settings.h src/hw.h Makefile
 	@mkdir -p $(dir $@)
@@ -192,8 +199,9 @@ $(BUILD)/%.o: src/%.c
 $(BUILD)/$(PROJECT).elf: $(OBJS) $(BUILD)/linker.ld $(LLD_DIR)/ld.lld
 	$(CLANG) $(LDFLAGS) $(OBJS) -o $@
 
-$(BUILD)/$(PROJECT).bin: $(BUILD)/$(PROJECT).elf tools/elf2bin.py
+$(BUILD)/$(PROJECT).bin: $(BUILD)/$(PROJECT).elf tools/elf2bin.py tools/check_layout.py
 	python3 tools/elf2bin.py $< $@ $(APP_BASE)
+	python3 tools/check_layout.py $@ $(APP_BASE) $(APP_FLASH_SIZE) $(FW_STAGE_BASE)
 
 clean:
 	rm -rf $(BUILD_ROOT)
@@ -211,6 +219,6 @@ release-lt-hw4:
 	cp $(BUILD_ROOT)/lt-hw4/$(PROJECT).bin $(DIST)/F2C23T-$(VERSION)-08008000.bin
 
 release-hw4:
-	$(MAKE) BUILD=$(BUILD_ROOT)/hw4.0 APP_BASE=0x08007000 APP_FLASH_SIZE=0x00045000 FW_STAGE_BASE=0x08050000 HW_TARGET=hw4.0 HW_TARGET_HW40=1 all
+	$(MAKE) BUILD=$(BUILD_ROOT)/hw4.0 APP_BASE=0x08007000 APP_FLASH_SIZE=0x00079000 FW_STAGE_BASE=0x08080000 HW_TARGET=hw4.0 HW_TARGET_HW40=1 all
 	@mkdir -p $(DIST)
 	cp $(BUILD_ROOT)/hw4.0/$(PROJECT).bin $(DIST)/F2C23T-$(VERSION)-HW4.0-08007000.bin
