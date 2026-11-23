@@ -38,7 +38,11 @@
 #define GEN_FREQ_UNIT_COUNT 3u
 #define GEN_DUTY_EDIT_DIGITS 3u
 #define GEN_AMP_EDIT_DIGITS 2u
+// The build sets this (see VERSION in the Makefile); the literal is the
+// fallback for host builds, and tests/dmm.c checks the two agree.
+#ifndef FIRMWARE_VERSION_TEXT
 #define FIRMWARE_VERSION_TEXT "v2026.11.7"
+#endif
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1
 #endif
@@ -1018,6 +1022,12 @@ static const char *fw_update_status_text(const fw_update_status_t *status) {
         }
         if (status->error == FW_UPDATE_ERR_RANGE) {
             return "FILE TOO LARGE";
+        }
+        if (status->error == FW_UPDATE_ERR_FLASH) {
+            return "FLASH WRITE FAILED";
+        }
+        if (status->error == FW_UPDATE_ERR_ORDER) {
+            return "TRANSFER INCOMPLETE";
         }
         return "UPDATE ERROR";
     }
@@ -7099,6 +7109,12 @@ static const char *settings_value_text(uint8_t row, char out[12]) {
         // to half size, which made the tile look disabled.
         return "FACTORY";
     }
+    return FIRMWARE_VERSION_TEXT;
+}
+
+// Also reported over CDC, because with no keypad fitted the About page is
+// out of reach and there is otherwise no way to tell what is running.
+const char *ui_firmware_version(void) {
     return FIRMWARE_VERSION_TEXT;
 }
 

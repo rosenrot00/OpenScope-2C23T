@@ -122,6 +122,11 @@ Output files:
 - `dist/F2C23T-v2026.11.7-08008000.bin`
 - `dist/F2C23T-v2026.11.7-HW4.0-08007000.bin`
 
+Each image is checked against the flash layout it was built for, and the build
+fails if it does not fit its slot, if it would overlap the update staging area
+or the settings page, or if the staging area would cross a flash bank boundary.
+`docs/memory-map.md` describes the layout and why the bank boundary matters.
+
 If no Rust toolchain provides `rust-lld`, point the build at the system LLVM linker:
 
 ```sh
@@ -134,7 +139,8 @@ Run the host regression tests with Clang:
 make test
 ```
 
-These tests cover DMM decoding and UART framing, scope/FFT measurements, generator state transitions, both FPGA timing transports, bootloader read protection, and FAT backup export with mocked hardware and address/undefined-behavior sanitizers. They do not replace testing on a device.
+These tests cover DMM decoding and UART framing, scope/FFT measurements, generator state transitions, both FPGA timing transports, bootloader read protection, in-app update staging
+across both flash banks, and FAT backup export with mocked hardware and address/undefined-behavior sanitizers. They do not replace testing on a device.
 
 ## Bootloader Backup
 
@@ -171,6 +177,46 @@ To flash the firmware with the built-in bootloader:
 
 The bootloader is not modified by this firmware. If the application firmware does not boot, you should still be able to enter bootloader mode again with `MENU` + power and flash another firmware file. In normal use this means there is no permanent brick risk from flashing the application firmware.
 
+## In-App Firmware Update
+
+Once this firmware is running, later updates no longer need the bootloader.
+Copy the `.bin` onto the USB drive the firmware itself exposes -- the same drive
+that holds the screenshots -- and wait. About a second after the last write the
+device picks the file up, stages it into a spare flash region, programs the
+application slot, verifies it and starts the new firmware. No button press is
+needed and the file is deleted once the update has been applied. On HW4.0 the
+whole sequence takes roughly half a minute.
+
+Any name works as long as it begins with `F2C23T` and ends in `.bin`, so a
+release asset can be copied exactly as it was downloaded. A bootloader backup
+`boot_hw4.bin` or `boot_old.bin` sitting on the drive is ignored. The file has
+to be at least 8 KiB and no larger than the application slot.
+
+Nothing is written to the application slot until the whole image has been staged
+and read back, so an interrupted copy or a failed write cannot leave the device
+unbootable. When staging fails the file is deleted, the running firmware carries
+on, and the update dialog says why:
+
+| Message | Meaning |
+| --- | --- |
+| `FILE TOO LARGE` | The image does not fit the application slot. |
+| `NOT A FIRMWARE FILE` | The reset vector does not point into the application slot. |
+| `FLASH WRITE FAILED` | A staged halfword did not read back. |
+| `TRANSFER INCOMPLETE` | The host left a 512-byte sector half written. |
+
+The running firmware and the state of the last update can also be read over the
+USB serial port:
+
+```
+VER?  ->  $VER,v2026.11.7,HW4.0
+UPD?  ->  $UPD,<state>,<error>,<bytes staged>,<expected size>
+```
+
+`<state>` is 0 idle, 1 staging, 2 ready, 3 error, 4 applying; `<error>` is 0
+none, 1 too large, 2 bad vectors, 3 flash write failed, 4 transfer incomplete.
+This is the only way to confirm which firmware is running on a device whose
+keypad cannot be reached.
+
 ## Hardware Versions
 
 There are at least two hardware variants:
@@ -178,7 +224,11 @@ There are at least two hardware variants:
 - `<HW4.0`: older hardware, app start at `0x08008000`, old FPGA transport.
 - `HW4.0`: newer hardware, app start at `0x08007000`, newer FPGA bitstream and GPIOC parallel FPGA transport.
 
-The older hardware build is the primary tested target at the moment. The newer HW4.0 build exists, but still needs real-device testing to confirm that oscilloscope, signal generator, multimeter, storage, and firmware update behavior all work correctly.
+The older hardware build is the primary tested target at the moment. On HW4.0
+the in-app firmware update has now been verified on a real device, in both
+directions, including an update applied by a firmware that had itself been
+installed that way. Oscilloscope, signal generator, multimeter and storage
+behavior on HW4.0 still need confirmation on hardware.
 
 ## Project Status
 
