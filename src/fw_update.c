@@ -107,7 +107,7 @@ static uint8_t flash_erase_page(uint32_t addr) {
     FLASH_CTRL_OF(addr) &= ~FLASH_CTRL_PER;
     ok = (FLASH_STS_OF(addr) & (FLASH_STS_PGERR | FLASH_STS_WRPRTERR)) ? 0u : 1u;
     flash_clear_status(addr);
-    return ok && REG16(addr) == 0xFFFFu;
+    return ok;
 }
 
 static uint8_t flash_program_halfword(uint32_t addr, uint16_t value) {
@@ -121,8 +121,7 @@ static uint8_t flash_program_halfword(uint32_t addr, uint16_t value) {
     FLASH_CTRL_OF(addr) &= ~FLASH_CTRL_PG;
     ok = (FLASH_STS_OF(addr) & (FLASH_STS_PGERR | FLASH_STS_WRPRTERR)) ? 0u : 1u;
     flash_clear_status(addr);
-    // Read back: a write through the wrong bank's registers reports no error.
-    return ok && REG16(addr) == value;
+    return ok;
 }
 
 static uint8_t bit_get(const uint8_t *bits, uint32_t bit) {
@@ -249,27 +248,29 @@ static uint8_t fw_stage_matches(uint32_t sector, const uint8_t *data) {
     return 1;
 }
 
-static uint8_t fw_stage_program_sector(uint32_t sector, const uint8_t *data) {
-    uint32_t page = sector / FW_SECTORS_PER_PAGE;
-    uint32_t page_addr = FW_STAGE_BASE + page * FW_PAGE_SIZE;
+static uint8_t fw_stage_program_and_verify(uint32_t sector, const uint8_t *data) {
     uint32_t addr = FW_STAGE_BASE + sector * FW_SECTOR_SIZE;
 
+    for (uint32_t i = 0; i < FW_SECTOR_SIZE; i += 2u) {
+        uint16_t value = (uint16_t)data[i] | ((uint16_t)data[i + 1u] << 8);
+        if (value != 0xFFFFu && !flash_program_halfword(addr + i, value)) {
+            return 0;
+        }
+    }
+    // Check the whole sector, including skipped 0xFFFF words: a silent
+    // erase failure can leave old data even when programming reports success.
+    return fw_stage_matches(sector, data);
+}
+
+static uint8_t fw_stage_write_new_sector(uint32_t sector, const uint8_t *data) {
+    uint32_t page = sector / FW_SECTORS_PER_PAGE;
     if (!bit_get(fw_stage_pages, page)) {
-        if (!flash_erase_page(page_addr)) {
+        if (!flash_erase_page(FW_STAGE_BASE + page * FW_PAGE_SIZE)) {
             return 0;
         }
         bit_set(fw_stage_pages, page);
     }
-    for (uint32_t i = 0; i < FW_SECTOR_SIZE; i += 2u) {
-        uint16_t value = (uint16_t)data[i] | ((uint16_t)data[i + 1u] << 8);
-        if (value == 0xFFFFu) {
-            continue;
-        }
-        if (!flash_program_halfword(addr + i, value)) {
-            return 0;
-        }
-    }
-    return 1;
+    return fw_stage_program_and_verify(sector, data);
 }
 
 // Restaging a sector that already holds different data needs the whole 2 KiB
@@ -307,20 +308,8 @@ static uint8_t fw_stage_rewrite_page(uint32_t sector, const uint8_t *data) {
     bit_set(fw_stage_pages, page);
 
     for (uint32_t s = 0; s < FW_SECTORS_PER_PAGE; ++s) {
-        uint32_t offset = s * FW_SECTOR_SIZE;
-
-        if (!keep[s]) {
-            continue;
-        }
-        for (uint32_t i = 0; i < FW_SECTOR_SIZE; i += 2u) {
-            uint16_t value = (uint16_t)fw_page_buffer[offset + i] |
-                             ((uint16_t)fw_page_buffer[offset + i + 1u] << 8);
-            if (value == 0xFFFFu) {
-                continue;
-            }
-            if (!flash_program_halfword(page_addr + offset + i, value)) {
-                return 0;
-            }
+        if (keep[s] && !fw_stage_program_and_verify(first + s, fw_page_buffer + s * FW_SECTOR_SIZE)) {
+            return 0;
         }
     }
     return 1;
@@ -353,7 +342,7 @@ static uint8_t fw_sector_commit(uint8_t force) {
         ok = fw_stage_matches(sector, fw_sector_buffer) ? 1u :
              fw_stage_rewrite_page(sector, fw_sector_buffer);
     } else {
-        ok = fw_stage_program_sector(sector, fw_sector_buffer);
+        ok = fw_stage_write_new_sector(sector, fw_sector_buffer);
     }
     flash_lock(FW_STAGE_BASE);
     fw_sector_release();
@@ -491,6 +480,12 @@ void fw_update_note_file(uint32_t base_lba, uint32_t size) {
     fw_update_note_file_size(size);
 }
 
+void fw_update_staging_failed(void) {
+    if (fw_status.state != FW_UPDATE_STATE_ERROR && fw_status.state != FW_UPDATE_STATE_APPLYING) {
+        fw_set_error(FW_UPDATE_ERR_ORDER);
+    }
+}
+
 void fw_update_clear(void) {
     if (fw_status.state == FW_UPDATE_STATE_APPLYING) {
         return;
@@ -509,7 +504,9 @@ void fw_update_clear(void) {
     ++fw_status.sequence;
 }
 
+#if defined(__arm__)
 __attribute__((section(".data.ramfunc"), noinline, used))
+#endif
 static void fw_ram_install(uint32_t src, uint32_t dst, uint32_t size) {
     volatile uint32_t *flash_sts = (volatile uint32_t *)0x4002200Cu;
     volatile uint32_t *flash_ctrl = (volatile uint32_t *)0x40022010u;

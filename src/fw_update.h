@@ -14,12 +14,9 @@ enum {
     FW_UPDATE_ERR_NONE,
     FW_UPDATE_ERR_RANGE,
     FW_UPDATE_ERR_VECTOR,
-    // A staged halfword did not read back: the flash refused the write, or it
-    // was aimed at the wrong flash bank's registers.
+    // Flash reported an error, or a staged sector did not match its source.
     FW_UPDATE_ERR_FLASH,
-    // A 512-byte sector was left half filled when the next one started. A
-    // sector reaches flash whole or not at all, so this is reported instead
-    // of staging a short image that would flash and never boot.
+    // A staging sector or the firmware file was incomplete.
     FW_UPDATE_ERR_ORDER,
 };
 
@@ -35,6 +32,8 @@ typedef struct {
 void fw_update_usb_data(uint32_t lba, uint16_t sector_offset, const uint8_t *data, uint16_t len);
 void fw_update_note_file(uint32_t base_lba, uint32_t size);
 uint8_t fw_update_request_apply(void);
+// Report a failed transfer without overwriting a more specific flash error.
+void fw_update_staging_failed(void);
 void fw_update_clear(void);
 void fw_update_service(void);
 void fw_update_status(fw_update_status_t *status);

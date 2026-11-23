@@ -22,6 +22,8 @@ static uint8_t source_data[BOOTLOADER_SIZE];
 static uint8_t readable;
 static uint8_t valid_vectors;
 static uint8_t update_busy;
+static uint8_t injected_update_error;
+static fw_update_status_t test_update_status;
 static unsigned writes;
 static unsigned reads;
 static unsigned fail_write;
@@ -83,14 +85,28 @@ uint8_t w25q_write_sector_busy(void) { return async_steps != 0; }
 uint32_t board_cycle_counter_read(void) { return clock_ticks; }
 void delay_ms(uint32_t ms) { (void)ms; }
 void fw_update_status(fw_update_status_t *status) {
-    memset(status, 0, sizeof(*status));
+    *status = test_update_status;
     if (update_busy) status->state = FW_UPDATE_STATE_STAGING;
 }
-void fw_update_clear(void) {}
+void fw_update_clear(void) { memset(&test_update_status, 0, sizeof(test_update_status)); }
+void fw_update_staging_failed(void) {
+    if (test_update_status.state != FW_UPDATE_STATE_ERROR) {
+        test_update_status.state = FW_UPDATE_STATE_ERROR;
+        test_update_status.error = FW_UPDATE_ERR_ORDER;
+    }
+}
 uint8_t fw_update_request_apply(void) { return 0; }
-void fw_update_note_file(uint32_t base_lba, uint32_t size) { (void)base_lba; (void)size; }
+void fw_update_note_file(uint32_t base_lba, uint32_t size) {
+    test_update_status.state = FW_UPDATE_STATE_STAGING;
+    test_update_status.base_lba = base_lba;
+    test_update_status.expected_size = size;
+}
 void fw_update_usb_data(uint32_t lba, uint16_t sector_offset, const uint8_t *data, uint16_t len) {
     (void)lba; (void)sector_offset; (void)data; (void)len;
+    if (injected_update_error) {
+        test_update_status.state = FW_UPDATE_STATE_ERROR;
+        test_update_status.error = injected_update_error;
+    }
 }
 void ui_set_dmm_mode(uint8_t mode) { (void)mode; }
 void ui_set_main_mode(uint8_t mode) { (void)mode; }
@@ -137,6 +153,8 @@ static raw_fat_volume_t setup(uint16_t sector_bytes, uint8_t type, uint8_t spc) 
     raw_update_scan_pending = raw_update_streaming = msc_update_candidate = 0;
     readable = valid_vectors = 1;
     update_busy = corrupt_pending = saw_completion = last_progress = 0;
+    injected_update_error = FW_UPDATE_ERR_NONE;
+    fw_update_clear();
     writes = fail_write = fail_read = 0;
     for (unsigned i = 0; i < sizeof(source_data); ++i) source_data[i] = (uint8_t)(i * 31u);
     uint32_t clusters = type == FAT_TYPE_12 ? 600u : (type == FAT_TYPE_16 ? 4200u : 66000u);
@@ -582,6 +600,30 @@ static void test_usb_link_activity(void) {
     assert(!usb_cdc_is_configured()); // Cycle-counter wrap is harmless.
 }
 
+static void test_failed_update_status_survives_cleanup(void) {
+    for (unsigned inject = 0; inject < 2u; ++inject) {
+        raw_fat_volume_t fat = setup(512, FAT_TYPE_12, 1);
+        uint32_t entry_addr = fat.root_lba * fat.bytes_per_sector + 32u;
+        assert(raw_fat_write_entry_copy(&fat, 0, 2, 0x0FFFu));
+        assert(raw_fat_export_entry(entry_addr, "F2C23T  BIN", 2, 8192u));
+        injected_update_error = inject ? FW_UPDATE_ERR_FLASH : FW_UPDATE_ERR_NONE;
+        // A read-back error, or an incomplete FAT chain if no error was injected.
+        raw_fat_scan_and_stage_update();
+        assert(disk[entry_addr] == 0xE5u && !msc_update_candidate && !raw_update_streaming);
+        usb_ready = usb_configured = 1;
+        cdc_tx_busy = 1;
+        cdc_tx_head = cdc_tx_tail = 0;
+        handle_cdc_rx_command("UPD?");
+        const char *response = inject ? "$UPD,3,3,0,8192\r\n" : "$UPD,3,4,0,8192\r\n";
+        assert(cdc_tx_head == strlen(response));
+        assert(!memcmp(cdc_tx_buf, response, cdc_tx_head));
+
+        // A remembered failure is not an active operation on the flash.
+        usb_ready = usb_configured = 0;
+        assert(usb_msc_export_bootloader("v2026.10.1", 0) == BOOT_EXPORT_OK);
+    }
+}
+
 int main(void) {
     test_export(512, FAT_TYPE_12, 1);
     test_export(4096, FAT_TYPE_12, 2);
@@ -598,6 +640,7 @@ int main(void) {
     test_msc_short_packets();
     test_msc_read_error();
     test_usb_link_activity();
+    test_failed_update_status_survives_cleanup();
     puts("USB MSC: cooperative durable writes, reset ownership, short packets, read errors and link expiry passed");
     puts("bootloader FAT export checks passed (" HW_TARGET_NAME ")");
 }

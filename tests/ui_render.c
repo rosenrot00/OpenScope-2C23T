@@ -126,6 +126,17 @@ static void test_status_snapshot(void) {
     assert(battery_snapshot_changed());
 }
 
+static void test_fw_update_error_overlay_times_out(void) {
+    fw_update_status_t status = { .state = FW_UPDATE_STATE_ERROR, .sequence = 1 };
+    assert(ui_fw_update_overlay_tick(&status, 20));
+    assert(ui_fw_update_error_ms == FW_UPDATE_ERROR_OVERLAY_MS);
+    assert(!ui_fw_update_overlay_tick(&status, FW_UPDATE_ERROR_OVERLAY_MS - 1u));
+    assert(ui_fw_update_error_ms == 1);
+    assert(ui_fw_update_overlay_tick(&status, 20));
+    assert(!ui_fw_update_error_ms && !ui_fw_update_overlay_tick(&status, 20));
+    assert(status.state == FW_UPDATE_STATE_ERROR);
+}
+
 static void test_no_manual_range_badge(void) {
     low_current_reading("5000", 0);
     ui.auto_range = 0;
@@ -300,6 +311,7 @@ int main(void) {
     test_low_current_bar();
     test_bar_ratios();
     test_status_snapshot();
+    test_fw_update_error_overlay_times_out();
     test_no_manual_range_badge();
     test_dmm_softkeys();
     test_partial_headers();

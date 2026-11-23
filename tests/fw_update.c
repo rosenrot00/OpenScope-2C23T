@@ -19,9 +19,8 @@
 //
 // Writes through a macro cannot run code, so every accessor first reconciles
 // the previous one: it looks at what the caller left in the cell or register
-// it was handed and applies the hardware's semantics then. The updater always
-// touches another register right after a write (it clears PG, reads STS and
-// reads the cell back), so the reconciliation always runs.
+// it was handed and applies the hardware's semantics then. The updater
+// checks status after programming and verifies the sector before counting it.
 
 #include "../src/hw.h"
 
@@ -294,7 +293,7 @@ static void test_full_image(void) {
         STAGE_BYTES - 512u,
         STAGE_BYTES,
     };
-    const uint32_t fat_sectors[] = {512u, 1024u, 4096u};
+    const uint32_t fat_sectors[] = {512u, 1024u, 2048u, 4096u};
     fw_update_status_t status;
 
     for (unsigned s = 0; s < sizeof(sizes) / sizeof(sizes[0]); ++s) {
@@ -356,25 +355,43 @@ static void test_lost_writes_are_detected(void) {
     assert(status.error == FW_UPDATE_ERR_FLASH);
     assert(!fw_update_request_apply());
 
-    // Everything up to the cut is still intact: the failure is reported at
-    // the first lost halfword, not retrospectively.
-    assert(status.bytes <= reach + 512u);
+    assert(status.bytes == reach); // The failed sector is not counted.
 }
 
 // An erase that does not take must be caught as well.
 static void test_failed_erase_is_detected(void) {
     static uint8_t image[40000];
     const uint32_t size = 40000u;
+    const uint32_t page = 7u;
+    const uint32_t stale_offsets[] = {0u, FW_SECTOR_SIZE + 2u};
     fw_update_status_t status;
 
-    make_image(image, size);
-    flash_reset();
-    fail_erase_page = 7u;
-    cells[(7u * PAGE_SIZE) / 2u] = 0x1234u; // a page that will not go blank
+    for (unsigned i = 0; i < sizeof(stale_offsets) / sizeof(stale_offsets[0]); ++i) {
+        uint32_t offset = page * PAGE_SIZE + stale_offsets[i];
+
+        make_image(image, size);
+        image[offset] = image[offset + 1u] = 0xFFu;
+        flash_reset();
+        fail_erase_page = page;
+        // The second case leaves the page's first word blank. The stale
+        // word would be missed by a page probe or write-only verification.
+        cells[offset / 2u] = 0x1234u;
+        feed_image(image, size, 512u);
+        fw_update_staging_failed();
+        fw_update_status(&status);
+        assert(status.state == FW_UPDATE_STATE_ERROR);
+        assert(status.error == FW_UPDATE_ERR_FLASH);
+        assert(status.bytes == offset - offset % FW_SECTOR_SIZE);
+        assert(!fw_update_request_apply());
+    }
+
+    // No reboot is needed after the error: the next transfer can use the slot.
+    fail_erase_page = 0xFFFFFFFFu;
+    fw_update_clear();
     feed_image(image, size, 512u);
     fw_update_status(&status);
-    assert(status.state == FW_UPDATE_STATE_ERROR);
-    assert(status.error == FW_UPDATE_ERR_FLASH);
+    assert(status.state == FW_UPDATE_STATE_READY && status.error == FW_UPDATE_ERR_NONE);
+    check_staged(image, size);
 }
 
 // A sector left half filled when the next one starts is an error, not a
@@ -440,6 +457,14 @@ static void test_restage(void) {
     fw_update_status(&status);
     assert(status.error == FW_UPDATE_ERR_NONE);
     check_staged(image, size);
+
+    // A page rewrite must also check the neighbouring sectors it restores.
+    drop_writes_from = STAGE_BASE + 2048u + 512u;
+    image[2048] ^= 1u;
+    fw_update_usb_data(STAGE_LBA + 4u, 0, &image[2048], 512u);
+    fw_update_status(&status);
+    assert(status.state == FW_UPDATE_STATE_ERROR && status.error == FW_UPDATE_ERR_FLASH);
+    assert(!fw_update_request_apply());
 }
 
 // Sizes the updater must refuse outright.

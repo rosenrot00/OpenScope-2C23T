@@ -75,6 +75,7 @@
 #define SCOPE_MEASURE_MENU_VISIBLE 3u
 #define SCOPE_MEASURE_MENU_COUNT 4u
 #define SCREENSHOT_OVERLAY_MS 1400u
+#define FW_UPDATE_ERROR_OVERLAY_MS 3000u
 
 enum {
     SCREENSHOT_STATE_SAVING,
@@ -269,6 +270,7 @@ static uint16_t scope_frame_age_ms;
 static uint16_t scope_frame_interval_x10ms;
 static uint32_t ui_last_render_ticks;
 static uint32_t ui_fw_update_sequence;
+static uint16_t ui_fw_update_error_ms;
 static scope_trace_cache_t scope_trace_cache[2];
 static battery_snapshot_t battery_snapshot;
 static dmm_stats_t dmm_stats;
@@ -1032,6 +1034,23 @@ static const char *fw_update_status_text(const fw_update_status_t *status) {
         return "UPDATE ERROR";
     }
     return "";
+}
+
+static uint8_t ui_fw_update_overlay_tick(const fw_update_status_t *status, uint32_t elapsed_ms) {
+    if (status->sequence != ui_fw_update_sequence) {
+        ui_fw_update_sequence = status->sequence;
+        ui_fw_update_error_ms = status->state == FW_UPDATE_STATE_ERROR ? FW_UPDATE_ERROR_OVERLAY_MS : 0;
+        return 1;
+    }
+    if (!ui_fw_update_error_ms) {
+        return 0;
+    }
+    if (elapsed_ms >= ui_fw_update_error_ms) {
+        ui_fw_update_error_ms = 0;
+        return 1;
+    }
+    ui_fw_update_error_ms = (uint16_t)(ui_fw_update_error_ms - elapsed_ms);
+    return 0;
 }
 
 // Redrawn as rounded dialogs further down, next to the other modern UI.
@@ -7249,7 +7268,8 @@ static void draw_fw_update_overlay(uint16_t bg) {
 
     (void)bg;
     fw_update_status(&status);
-    if (status.state == FW_UPDATE_STATE_IDLE) {
+    if (status.state == FW_UPDATE_STATE_IDLE ||
+        (status.state == FW_UPDATE_STATE_ERROR && !ui_fw_update_error_ms)) {
         return;
     }
     error = status.state == FW_UPDATE_STATE_ERROR;
@@ -10940,7 +10960,6 @@ void ui_tick(uint32_t elapsed_ms) {
     }
 
     uint8_t battery_changed = 0;
-    uint8_t fw_update_changed = 0;
     fw_update_status_t fw_status;
     uint32_t sleep_timeout_ms = settings_sleep_timeout_ms();
 
@@ -10978,10 +10997,7 @@ void ui_tick(uint32_t elapsed_ms) {
     battery_changed = (uint8_t)(battery_blink_tick(elapsed_ms) || battery_changed);
 
     fw_update_status(&fw_status);
-    if (fw_status.sequence != ui_fw_update_sequence) {
-        ui_fw_update_sequence = fw_status.sequence;
-        fw_update_changed = 1;
-    }
+    uint8_t fw_update_changed = ui_fw_update_overlay_tick(&fw_status, elapsed_ms);
 
     if (ui.screenshot_overlay_ms) {
         if (elapsed_ms >= ui.screenshot_overlay_ms) {

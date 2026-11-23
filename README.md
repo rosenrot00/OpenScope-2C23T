@@ -184,28 +184,27 @@ Copy the `.bin` onto the USB drive the firmware itself exposes -- the same drive
 that holds the screenshots -- and wait. About a second after the last write the
 device picks the file up, stages it into a spare flash region, programs the
 application slot, verifies it and starts the new firmware. No button press is
-needed and the file is deleted once the update has been applied. On HW4.0 the
-whole sequence takes roughly half a minute.
+needed. On HW4.0 the whole sequence takes roughly half a minute.
 
 Any name works as long as it begins with `F2C23T` and ends in `.bin`, so a
 release asset can be copied exactly as it was downloaded. A bootloader backup
 `boot_hw4.bin` or `boot_old.bin` sitting on the drive is ignored. The file has
 to be at least 8 KiB and no larger than the application slot.
 
-Nothing is written to the application slot until the whole image has been staged
-and read back, so an interrupted copy or a failed write cannot leave the device
-unbootable. When staging fails the file is deleted, the running firmware carries
-on, and the update dialog says why:
+Nothing is written to the application slot until the entire staged image has
+been verified. If staging fails, the file is deleted, the running firmware is
+unchanged, and the update dialog briefly shows the reason. Do not turn off the
+device while it is flashing the application.
 
 | Message | Meaning |
 | --- | --- |
 | `FILE TOO LARGE` | The image does not fit the application slot. |
 | `NOT A FIRMWARE FILE` | The reset vector does not point into the application slot. |
-| `FLASH WRITE FAILED` | A staged halfword did not read back. |
-| `TRANSFER INCOMPLETE` | The host left a 512-byte sector half written. |
+| `FLASH WRITE FAILED` | The flash operation failed or the staged bytes did not match the file. |
+| `TRANSFER INCOMPLETE` | The complete firmware file could not be staged. |
 
-The running firmware and the state of the last update can also be read over the
-USB serial port:
+The running firmware and update status can also be read over the USB serial
+port. A staging error stays available until the next update attempt or restart:
 
 ```
 VER?  ->  $VER,v2026.11.7,HW4.0

@@ -67,6 +67,7 @@ bit per 512-byte sector plus a single sector held in RAM costs 728 bytes, which
 is what makes the larger slot possible at all. `tests/fw_update.c` asserts the
 budget so it cannot creep back up.
 
-A sector is held in RAM until every one of its bytes has arrived and is then
-written in one go, so a short or interrupted transfer can never look like
-staged data.
+A sector is held in RAM until every one of its bytes has arrived. It counts
+as staged only after a single full comparison with flash, including words
+that should have been left erased. Rewriting a page also verifies its other
+previously staged sectors as they are restored.

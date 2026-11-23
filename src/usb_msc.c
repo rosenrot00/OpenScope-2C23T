@@ -1511,7 +1511,8 @@ boot_export_result_t usb_msc_export_bootloader(const char *version,
     }
     fw_update_status(&status);
     if (msc_state != MSC_IDLE || raw_write_failed || raw_update_scan_pending ||
-        raw_update_streaming || msc_update_candidate || status.state != FW_UPDATE_STATE_IDLE) {
+        raw_update_streaming || msc_update_candidate ||
+        (status.state != FW_UPDATE_STATE_IDLE && status.state != FW_UPDATE_STATE_ERROR)) {
         if (was_enabled) {
             REG32(NVIC_ISER0) = 1u << 20;
         }
@@ -1613,8 +1614,8 @@ static void raw_fat_scan_and_stage_update(void) {
     msc_update_candidate = 1;
     raw_update_streaming = 1;
     if (!raw_fat_stage_update_file(&fat, &file)) {
+        fw_update_staging_failed();
         raw_fat_delete_update_file(raw_update_dir_byte_addr);
-        fw_update_clear();
         msc_update_candidate = 0;
     }
     raw_update_streaming = 0;
@@ -2635,7 +2636,6 @@ void usb_msc_poll(void) {
         }
         raw_fat_delete_update_file(raw_update_dir_byte_addr);
         usb_msc_storage_end();
-        fw_update_clear();
         msc_update_candidate = 0;
         return;
     }
@@ -2649,12 +2649,10 @@ void usb_msc_poll(void) {
         if (!usb_msc_storage_begin()) {
             return;
         }
-        if (fw_update_request_apply()) {
-            raw_fat_delete_update_file(raw_update_dir_byte_addr);
-        } else {
-            raw_fat_delete_update_file(raw_update_dir_byte_addr);
-            fw_update_clear();
+        if (!fw_update_request_apply()) {
+            fw_update_staging_failed();
         }
+        raw_fat_delete_update_file(raw_update_dir_byte_addr);
         usb_msc_storage_end();
         msc_update_candidate = 0;
     }
