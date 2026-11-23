@@ -386,6 +386,9 @@ static void test_dmm_group_selection(void) {
     dmm_apply_selected_mode(DMM_MODE_AUTO);
     dmm_step_group(DMM_GROUP_CURRENT, 1);
     assert(ui.dmm_mode == DMM_MODE_DC_LO_CURR);
+    assert(dmm_sanitize_mode(DMM_MODE_CONT) == DMM_MODE_DIODE);
+    dmm_apply_selected_mode(dmm_sanitize_mode(DMM_MODE_CONT));
+    assert(ui.dmm_mode == DMM_MODE_DIODE && ui_settings.dmm_mode == DMM_MODE_DIODE);
 }
 
 static void test_selected_temperature_scale(void) {

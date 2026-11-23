@@ -11126,6 +11126,7 @@ void ui_tick(uint32_t elapsed_ms) {
 
 void ui_set_dmm_mode(uint8_t mode) {
     if (mode < DMM_MODE_COUNT) {
+        mode = dmm_sanitize_mode(mode);
         dmm_apply_selected_mode(mode);
         ui_render_local_change();
     }
