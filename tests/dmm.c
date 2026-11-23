@@ -13,10 +13,18 @@
 #include "../src/ui.c"
 #include "../src/font.c"
 
+static char last_usb_mode[16];
+static char last_usb_value[16];
+static char last_usb_unit[16];
+static uint8_t last_usb_valid;
+
 void delay_ms(uint32_t elapsed) { (void)elapsed; }
 void settings_note(const settings_state_t *settings) { (void)settings; }
 void usb_cdc_send_dmm(const char *mode, const char *value, const char *unit, uint8_t valid) {
-    (void)mode; (void)value; (void)unit; (void)valid;
+    snprintf(last_usb_mode, sizeof(last_usb_mode), "%s", mode ? mode : "");
+    snprintf(last_usb_value, sizeof(last_usb_value), "%s", value ? value : "");
+    snprintf(last_usb_unit, sizeof(last_usb_unit), "%s", unit ? unit : "");
+    last_usb_valid = valid;
 }
 
 static void make_frame(const char digits[4], unsigned dots, uint8_t prefix,
@@ -399,6 +407,9 @@ static void test_selected_temperature_scale(void) {
     assert(!strcmp(dmm_display_unit(), "~F"));
     assert(!strcmp(dmm_value_text(), "23.8")); // CDC still reports the wire value.
     assert(!strcmp(dmm_mode_name(), "TEMP"));
+    assert(!strcmp(last_usb_mode, "TEMPF"));
+    assert(!strcmp(last_usb_value, "74.8"));
+    assert(!strcmp(last_usb_unit, "DEGF"));
     dmm_toggle_relative();
     make_frame("0248", 8, 0, 0, 0x20, frame);
     assert(parse_frame(frame));

@@ -8149,6 +8149,23 @@ static void dmm_pause_for_menu_overlay(void) {
     dmm_pause();
 }
 
+void ui_dmm_send_usb_telemetry(void) {
+    extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
+    if (ui.dmm_mode == DMM_MODE_TEMP_F) {
+        usb_cdc_send_dmm("TEMPF", dmm_live_display_value(), "DEGF", dmm_has_reading());
+        return;
+    }
+    if (ui.dmm_mode == DMM_MODE_TEMP) {
+        usb_cdc_send_dmm("TEMP", dmm_live_display_value(), "DEGC", dmm_has_reading());
+        return;
+    }
+    if (ui.dmm_mode == DMM_MODE_LIVE) {
+        usb_cdc_send_dmm("LIVE", dmm_live_wire_detected() ? "LIVE" : "IDLE", "", 1u);
+        return;
+    }
+    usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
+}
+
 static void dmm_apply_selected_mode(uint8_t mode) {
     uint8_t choice;
     uint8_t group = dmm_mode_group(mode, &choice);
@@ -8168,8 +8185,7 @@ static void dmm_apply_selected_mode(uint8_t mode) {
     } else {
         dmm_set_mode(ui_settings.dmm_mode);
     }
-    extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
-    usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
+    ui_dmm_send_usb_telemetry();
 }
 
 void ui_note_runtime_settings(void) {
@@ -10797,6 +10813,7 @@ void ui_set_live_wire_detected(uint8_t detected) {
     dmm_live_wire_alert = detected;
     if (ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE) {
         ui_render_dmm_reading();
+        ui_dmm_send_usb_telemetry();
     }
 }
 
@@ -11158,6 +11175,10 @@ void ui_tick(uint32_t elapsed_ms) {
 
 void ui_set_dmm_mode(uint8_t mode) {
     if (mode < DMM_MODE_COUNT) {
+        if (ui.mode == UI_MODE_DMM && ui.dmm_mode == mode) {
+            ui_dmm_send_usb_telemetry();
+            return;
+        }
         dmm_apply_selected_mode(mode);
         ui_render_local_change();
     }
