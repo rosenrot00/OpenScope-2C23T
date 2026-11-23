@@ -41,7 +41,7 @@
 // The build sets this (see VERSION in the Makefile); the literal is the
 // fallback for host builds, and tests/dmm.c checks the two agree.
 #ifndef FIRMWARE_VERSION_TEXT
-#define FIRMWARE_VERSION_TEXT "v2026.11.7"
+#define FIRMWARE_VERSION_TEXT "v2026.11.8"
 #endif
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1

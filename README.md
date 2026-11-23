@@ -120,8 +120,8 @@ make release
 
 Output files:
 
-- `dist/F2C23T-v2026.11.7-08008000.bin`
-- `dist/F2C23T-v2026.11.7-HW4.0-08007000.bin`
+- `dist/F2C23T-v2026.11.8-08008000.bin`
+- `dist/F2C23T-v2026.11.8-HW4.0-08007000.bin`
 
 Each image is checked against the flash layout it was built for, and the build
 fails if it does not fit its slot, if it would overlap the update staging area
@@ -160,8 +160,8 @@ This function never erases or programs the MCU's internal flash and never change
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.11.7-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.11.7-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.11.8-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.11.8-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 When upgrading to v2026.11.4, saved settings and user calibration from older OpenScope builds are not carried over. The new settings signature prevents data from another firmware from being interpreted as OpenScope settings.
 
@@ -208,7 +208,7 @@ The running firmware and update status can also be read over the USB serial
 port. A staging error stays available until the next update attempt or restart:
 
 ```
-VER?  ->  $VER,v2026.11.7,HW4.0
+VER?  ->  $VER,v2026.11.8,HW4.0
 UPD?  ->  $UPD,<state>,<error>,<bytes staged>,<expected size>
 ```
 
