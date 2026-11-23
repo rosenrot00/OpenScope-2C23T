@@ -2163,17 +2163,23 @@ static uint8_t handle_cdc_gen_command(const char *cmd) {
         ui_gen_set_output(0);
     } else if ((arg = cdc_match_prefix(cmd, "GEN:?")) != 0 && cdc_command_end(arg)) {
         cdc_send_gen_state();
+        return 1;
     } else if ((arg = cdc_match_prefix(cmd, "GEN:FREQ:")) != 0) {
-        if (cdc_parse_u32(arg, &value)) ui_gen_set_frequency(value);
+        if (!cdc_parse_u32(arg, &value)) return 1;
+        ui_gen_set_frequency(value);
     } else if ((arg = cdc_match_prefix(cmd, "GEN:WAVE:")) != 0) {
-        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_wave((uint8_t)value);
+        if (!cdc_parse_u32(arg, &value) || value >= 256u) return 1;
+        ui_gen_set_wave((uint8_t)value);
     } else if ((arg = cdc_match_prefix(cmd, "GEN:AMP:")) != 0) {
-        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_amplitude((uint8_t)value);
+        if (!cdc_parse_u32(arg, &value) || value >= 256u) return 1;
+        ui_gen_set_amplitude((uint8_t)value);
     } else if ((arg = cdc_match_prefix(cmd, "GEN:DUTY:")) != 0) {
-        if (cdc_parse_u32(arg, &value) && value < 256u) ui_gen_set_duty((uint8_t)value);
+        if (!cdc_parse_u32(arg, &value) || value >= 256u) return 1;
+        ui_gen_set_duty((uint8_t)value);
     } else {
         return 0;
     }
+    cdc_send_gen_state();
     return 1;
 }
 
@@ -2203,8 +2209,8 @@ static void handle_cdc_rx_command(const char *cmd) {
             else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
             else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
             else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
-            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(11);
-            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M') ui_set_dmm_mode(12);
+            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M' && m[3] == 'A') ui_set_dmm_mode(11);
+            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M' && m[3] == 'A') ui_set_dmm_mode(12);
             else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
         }
     } else if ((arg = cdc_match_prefix(cmd, "KEY:")) != 0) {

@@ -11175,6 +11175,7 @@ void ui_tick(uint32_t elapsed_ms) {
 
 void ui_set_dmm_mode(uint8_t mode) {
     if (mode < DMM_MODE_COUNT) {
+        mode = dmm_sanitize_mode(mode);
         if (ui.mode == UI_MODE_DMM && ui.dmm_mode == mode) {
             ui_dmm_send_usb_telemetry();
             return;
