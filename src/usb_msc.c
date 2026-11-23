@@ -2108,6 +2108,14 @@ static void cdc_send_gen_state(void) {
     usb_cdc_send_bytes((const uint8_t *)buf, pos);
 }
 
+static void cdc_send_gen_duty(void) {
+    char buf[12] = "$DUTY,";
+    uint16_t pos = cdc_append_u32(buf, 6, ui_gen_duty());
+    buf[pos++] = '\r';
+    buf[pos++] = '\n';
+    usb_cdc_send_bytes((const uint8_t *)buf, pos);
+}
+
 // What is running, and how the last in-app update went. With the keypad off
 // the device the About screen is out of reach, so this is the only way to
 // confirm that an update actually replaced the firmware.
@@ -2174,8 +2182,14 @@ static uint8_t handle_cdc_gen_command(const char *cmd) {
         if (!cdc_parse_u32(arg, &value) || value >= 256u) return 1;
         ui_gen_set_amplitude((uint8_t)value);
     } else if ((arg = cdc_match_prefix(cmd, "GEN:DUTY:")) != 0) {
-        if (!cdc_parse_u32(arg, &value) || value >= 256u) return 1;
-        ui_gen_set_duty((uint8_t)value);
+        if (*arg == '?' && cdc_command_end(arg + 1)) {
+            cdc_send_gen_duty();
+        } else if (cdc_parse_u32(arg, &value) && value <= UINT8_MAX) {
+            ui_gen_set_duty((uint8_t)value);
+            cdc_send_gen_state();
+            cdc_send_gen_duty();
+        }
+        return 1;
     } else {
         return 0;
     }
@@ -2183,36 +2197,41 @@ static uint8_t handle_cdc_gen_command(const char *cmd) {
     return 1;
 }
 
+static void handle_cdc_mode_command(const char *cmd) {
+    static const char *const screens[] = {"DMM", "SCOPE", "GEN"};
+    static const struct { const char *name; uint8_t mode; } modes[] = {
+        { "AUTO", DMM_MODE_AUTO }, { "DCV", DMM_MODE_DCV }, { "ACV", DMM_MODE_ACV },
+        { "RES", DMM_MODE_RES }, { "DIODE", DMM_MODE_DIODE }, { "CAP", DMM_MODE_CAP },
+        { "LIVE", DMM_MODE_LIVE }, { "CONT", DMM_MODE_CONT },
+        { "TEMP", DMM_MODE_TEMP }, { "TEMPF", DMM_MODE_TEMP_F },
+        { "ACA", DMM_MODE_AC_HI_CURR }, { "DCA", DMM_MODE_DC_HI_CURR },
+        { "ACMA", DMM_MODE_AC_LO_CURR }, { "DCMA", DMM_MODE_DC_LO_CURR },
+        { "MA", DMM_MODE_DC_LO_CURR },
+    };
+
+    for (uint8_t i = 0; i < sizeof(screens) / sizeof(screens[0]); ++i) {
+        const char *rest = cdc_match_prefix(cmd, screens[i]);
+        if (rest && cdc_command_end(rest)) {
+            ui_set_main_mode(i);
+            return;
+        }
+    }
+    for (uint8_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+        const char *rest = cdc_match_prefix(cmd, modes[i].name);
+        if (rest && cdc_command_end(rest)) {
+            ui_set_main_mode(0);
+            ui_set_dmm_mode(modes[i].mode);
+            return;
+        }
+    }
+}
+
 static void handle_cdc_rx_command(const char *cmd) {
     const char *arg;
     if (!cmd) return;
     if (handle_cdc_gen_command(cmd)) return;
-    if (cmd[0] == 'M' && cmd[1] == 'O' && cmd[2] == 'D' && cmd[3] == 'E' && cmd[4] == ':') {
-        const char *m = cmd + 5;
-        if (m[0] == 'S' && m[1] == 'C' && m[2] == 'O' && m[3] == 'P' && m[4] == 'E') {
-            ui_set_main_mode(1);
-        } else if (m[0] == 'D' && m[1] == 'M' && m[2] == 'M') {
-            ui_set_main_mode(0);
-        } else if (m[0] == 'G' && m[1] == 'E' && m[2] == 'N') {
-            ui_set_main_mode(2);
-        } else {
-            ui_set_main_mode(0);
-            if (m[0] == 'A' && m[1] == 'U' && m[2] == 'T') ui_set_dmm_mode(0);
-            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(1);
-            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'V') ui_set_dmm_mode(2);
-            else if (m[0] == 'R' && m[1] == 'E' && m[2] == 'S') ui_set_dmm_mode(3);
-            else if (m[0] == 'D' && m[1] == 'I' && m[2] == 'O') ui_set_dmm_mode(4);
-            else if (m[0] == 'C' && m[1] == 'A' && m[2] == 'P') ui_set_dmm_mode(5);
-            else if (m[0] == 'L' && m[1] == 'I' && m[2] == 'V') ui_set_dmm_mode(6);
-            else if (m[0] == 'C' && m[1] == 'O' && m[2] == 'N') ui_set_dmm_mode(7);
-            else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M' && m[3] == 'P' && m[4] == 'F') ui_set_dmm_mode(13);
-            else if (m[0] == 'T' && m[1] == 'E' && m[2] == 'M') ui_set_dmm_mode(8);
-            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(9);
-            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'A') ui_set_dmm_mode(10);
-            else if (m[0] == 'A' && m[1] == 'C' && m[2] == 'M' && m[3] == 'A') ui_set_dmm_mode(11);
-            else if (m[0] == 'D' && m[1] == 'C' && m[2] == 'M' && m[3] == 'A') ui_set_dmm_mode(12);
-            else if (m[0] == 'M' && m[1] == 'A') ui_set_dmm_mode(12);
-        }
+    if ((arg = cdc_match_prefix(cmd, "MODE:")) != 0) {
+        handle_cdc_mode_command(arg);
     } else if ((arg = cdc_match_prefix(cmd, "KEY:")) != 0) {
         // Presses a button as if it had been pushed on the device, so the
         // whole interface can be walked from a PC.

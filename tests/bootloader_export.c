@@ -34,6 +34,11 @@ static uint8_t last_progress;
 static uint8_t saw_completion;
 static uint32_t remote_freq;
 static unsigned remote_freq_calls;
+static uint8_t remote_duty;
+static uint8_t remote_main_mode;
+static uint8_t remote_dmm_mode;
+static unsigned remote_main_mode_calls;
+static unsigned remote_dmm_mode_calls;
 static uint32_t clock_ticks;
 static const uint8_t *async_source;
 static uint32_t async_address;
@@ -108,8 +113,8 @@ void fw_update_usb_data(uint32_t lba, uint16_t sector_offset, const uint8_t *dat
         test_update_status.error = injected_update_error;
     }
 }
-void ui_set_dmm_mode(uint8_t mode) { (void)mode; }
-void ui_set_main_mode(uint8_t mode) { (void)mode; }
+void ui_set_dmm_mode(uint8_t mode) { remote_dmm_mode = mode; ++remote_dmm_mode_calls; }
+void ui_set_main_mode(uint8_t mode) { remote_main_mode = mode; ++remote_main_mode_calls; }
 void ui_scope_set_running(uint8_t run) { (void)run; }
 void ui_scope_trigger_auto(void) {}
 void ui_scope_step_timebase(int8_t dir) { (void)dir; }
@@ -122,12 +127,13 @@ void ui_gen_set_output(uint8_t run) { (void)run; }
 void ui_gen_set_frequency(uint32_t hz) { remote_freq = hz; ++remote_freq_calls; }
 void ui_gen_set_wave(uint8_t wave) { (void)wave; }
 void ui_gen_set_amplitude(uint8_t tenths_v) { (void)tenths_v; }
-void ui_gen_set_duty(uint8_t duty_percent) { (void)duty_percent; }
+void ui_gen_set_duty(uint8_t duty_percent) { remote_duty = duty_percent > 100u ? 100u : duty_percent; }
 uint8_t ui_gen_is_running(void) { return 0; }
 const char *ui_firmware_version(void) { return "v0.0.0-test"; }
 uint32_t ui_gen_frequency(void) { return remote_freq; }
 uint8_t ui_gen_wave(void) { return 0; }
 uint8_t ui_gen_amplitude(void) { return 33; }
+uint8_t ui_gen_duty(void) { return remote_duty; }
 uint8_t screenshot_render_current(uint32_t offset, uint8_t *dst, uint16_t len) {
     for (uint16_t i = 0; i < len; ++i) dst[i] = (uint8_t)(offset + i);
     return 1;
@@ -449,6 +455,51 @@ static void msc_test_setup(void) {
     REG32(NVIC_ISER0) = USB_IRQ_MASK;
 }
 
+static void test_cdc_mode_and_duty(void) {
+    remote_main_mode_calls = remote_dmm_mode_calls = 0;
+    handle_cdc_rx_command("MODE:SCOPE\r\n");
+    assert(remote_main_mode == 1u && remote_main_mode_calls == 1u);
+    handle_cdc_rx_command("MODE:DCMV");
+    handle_cdc_rx_command("MODE:DCMAxyz");
+    handle_cdc_rx_command("MODE:TEMPFjunk");
+    handle_cdc_rx_command("MODE:DMMx");
+    handle_cdc_rx_command("MODE:MAx");
+    handle_cdc_rx_command("MODE:");
+    assert(remote_main_mode == 1u && remote_main_mode_calls == 1u && !remote_dmm_mode_calls);
+
+    handle_cdc_rx_command("MODE:DCMA");
+    assert(remote_main_mode == 0u && remote_dmm_mode == DMM_MODE_DC_LO_CURR);
+    handle_cdc_rx_command("MODE:MA");
+    assert(remote_dmm_mode == DMM_MODE_DC_LO_CURR);
+    handle_cdc_rx_command("MODE:ACMA");
+    assert(remote_dmm_mode == DMM_MODE_AC_LO_CURR);
+    handle_cdc_rx_command("MODE:CONT");
+    assert(remote_dmm_mode == DMM_MODE_CONT);
+    handle_cdc_rx_command("MODE:TEMPF");
+    assert(remote_dmm_mode == DMM_MODE_TEMP_F);
+    handle_cdc_rx_command("MODE:TEMP");
+    assert(remote_dmm_mode == DMM_MODE_TEMP);
+    handle_cdc_rx_command("MODE:LIVE");
+    assert(remote_dmm_mode == DMM_MODE_LIVE && remote_dmm_mode_calls == 7u);
+
+    msc_test_setup();
+    remote_freq = 2000;
+    cdc_tx_head = cdc_tx_tail = 0;
+    cdc_tx_busy = 1;
+    handle_cdc_rx_command("GEN:DUTY:150");
+    static const char expected[] = "$GEN,0,2000,0,33\r\n$DUTY,100\r\n";
+    assert(remote_duty == 100u && cdc_tx_head == sizeof(expected) - 1u);
+    assert(!memcmp(cdc_tx_buf, expected, sizeof(expected) - 1u));
+    handle_cdc_rx_command("GEN:DUTY:10junk");
+    assert(remote_duty == 100u && cdc_tx_head == sizeof(expected) - 1u);
+    cdc_tx_head = cdc_tx_tail = 0;
+    handle_cdc_rx_command("GEN:DUTY:?\r\n");
+    static const char duty_reply[] = "$DUTY,100\r\n";
+    assert(cdc_tx_head == sizeof(duty_reply) - 1u);
+    assert(!memcmp(cdc_tx_buf, duty_reply, sizeof(duty_reply) - 1u));
+    cdc_tx_head = cdc_tx_tail = cdc_tx_busy = 0;
+}
+
 static void msc_test_packet(const uint8_t *data, uint16_t len) {
     unsigned before_reads = reads;
     unsigned before_writes = writes;
@@ -634,6 +685,7 @@ int main(void) {
     test_screenshot_failure_reasons();
     test_storage_busy();
     test_cdc_command_dispatch();
+    test_cdc_mode_and_duty();
     test_deferred_msc_write();
     test_msc_write_failure();
     test_msc_reset_during_write();

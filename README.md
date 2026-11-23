@@ -34,6 +34,7 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Runtime USB mass storage** while the device is running.
 - **USB serial (CDC) telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
   The community-developed Windows companion [FNIRSI 2C23T Studio](https://github.com/Daddelgreis74/fnirsi-2c23t-studio) uses this interface for live measurements, data logging, remote controls, and screenshots.
+  `MODE:TEMP`, `MODE:TEMPF`, and `MODE:LIVE` report `HOLD` until the meter sends a valid reading. Temperature units are explicitly `DEGC` and `DEGF`. `GEN:DUTY:<percent>` reports the accepted setting as `$DUTY,<percent>`, also available via `GEN:DUTY:?`, without changing the `$GEN` format.
 - **In-app firmware update** by copying a matching `F2C23T*.bin` file to the exposed USB storage.
 - **Screenshot capture** to the device storage by long-pressing `SAVE` (saved as `IMG_NN.BMP`), with the USB `SHOT` command and remote button presses via `KEY:<NAME>`.
 - **Read-only bootloader export** from Settings, with hardware-specific backups and CRC32 metadata.

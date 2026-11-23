@@ -680,7 +680,7 @@ static uint8_t parse_frame(const uint8_t frame[DMM_FRAME_LEN]) {
         return 0;
     }
 
-    changed = (uint8_t)(!dmm_valid || !text_equal(new_value, dmm_value) ||
+    changed = (uint8_t)(!dmm_valid || dmm_synthetic_valid || !text_equal(new_value, dmm_value) ||
                         !text_equal(new_unit, dmm_unit) || new_fahrenheit != dmm_unit_fahrenheit);
     text_copy(dmm_value, new_value, sizeof(dmm_value));
     text_copy(dmm_unit, new_unit, sizeof(dmm_unit));
@@ -969,8 +969,8 @@ const char *dmm_unit_text(void) {
     return dmm_unit;
 }
 
-// "DEG" covers both scales over USB, for the sake of hosts that have parsed
-// it that way all along. The screen has room to say which one it is.
+// The decoder keeps DEG for both scales. The UI supplies the selected scale
+// when it formats the reading for display or USB.
 uint8_t dmm_unit_is_fahrenheit(void) {
     return dmm_unit_fahrenheit;
 }

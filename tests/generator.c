@@ -31,7 +31,8 @@ void delay_ms(uint32_t ms) { (void)ms; }
 void dmm_pause(void) {}
 void dmm_hw4_set_mode_gate(uint8_t active) { (void)active; }
 void dmm_reenter(uint8_t mode) { (void)mode; }
-void dmm_set_mode(uint8_t mode) { (void)mode; }
+static unsigned dmm_set_mode_calls;
+void dmm_set_mode(uint8_t mode) { (void)mode; ++dmm_set_mode_calls; }
 void settings_note(const settings_state_t *settings) { (void)settings; }
 void settings_flush(void) {}
 void board_buzzer_set_volume(uint8_t level) { (void)level; }
@@ -102,6 +103,7 @@ const char *dmm_unit_text(void) { return ""; }
 uint8_t dmm_unit_is_fahrenheit(void) { return 0; }
 const char *dmm_status_text(void) { return ""; }
 uint8_t dmm_reading_is_real(void) { return 0; }
+uint8_t dmm_live_wire_active(void) { return 0; }
 void lcd_render(lcd_render_fn_t fn, void *ctx) { (void)fn; (void)ctx; }
 void lcd_fill(uint16_t color) { (void)color; }
 void lcd_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
@@ -482,6 +484,12 @@ static void test_remote_mode_change_repaints(void) {
     full_scene_clear = 0;
     ui_set_main_mode(0);
     assert(!full_scene_clear);
+
+    ui_set_dmm_mode(DMM_MODE_CONT);
+    assert(ui.dmm_mode == DMM_MODE_DIODE);
+    unsigned mode_calls = dmm_set_mode_calls;
+    ui_set_dmm_mode(DMM_MODE_CONT);
+    assert(dmm_set_mode_calls == mode_calls);
 }
 
 // Leading zeros are placeholders: the editors keep them in place so the
@@ -595,6 +603,11 @@ static void test_remote_generator_control(void) {
     assert(ui_gen_amplitude() <= 33u);
     ui_gen_set_amplitude(0u);
     assert(ui_gen_amplitude() >= 1u);
+
+    ui_gen_set_duty(150u);
+    assert(ui_gen_duty() == 100u);
+    ui_gen_set_duty(0u);
+    assert(ui_gen_duty() == GEN_DEFAULT_DUTY_PERCENT);
 
     // Stopping must silence the output, and the screen still must not change.
     ui_gen_set_output(0);

@@ -2,6 +2,25 @@
 
 #include <stdint.h>
 
+// UI mode indices, also used by the USB CDC controls.
+enum {
+    DMM_MODE_AUTO,
+    DMM_MODE_DCV,
+    DMM_MODE_ACV,
+    DMM_MODE_RES,
+    DMM_MODE_DIODE,
+    DMM_MODE_CAP,
+    DMM_MODE_LIVE,
+    DMM_MODE_CONT,
+    DMM_MODE_TEMP,
+    DMM_MODE_AC_HI_CURR,
+    DMM_MODE_DC_HI_CURR,
+    DMM_MODE_AC_LO_CURR,
+    DMM_MODE_DC_LO_CURR,
+    DMM_MODE_TEMP_F, // UI only; the meter IC has one temperature command.
+    DMM_MODE_COUNT,
+};
+
 void ui_init(void);
 void ui_handle_keys(uint32_t events);
 void ui_tick(uint32_t elapsed_ms);
@@ -31,4 +50,5 @@ uint8_t ui_gen_is_running(void);
 uint32_t ui_gen_frequency(void);
 uint8_t ui_gen_wave(void);
 uint8_t ui_gen_amplitude(void);
+uint8_t ui_gen_duty(void);
 const char *ui_firmware_version(void);

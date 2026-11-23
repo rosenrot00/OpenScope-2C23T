@@ -408,17 +408,18 @@ static void test_selected_temperature_scale(void) {
     assert(!dmm_hold_active && dmm_stats.count == 1);
     assert(!strcmp(dmm_display_value(), "74.8"));
     assert(!strcmp(dmm_display_unit(), "~F"));
-    assert(!strcmp(dmm_value_text(), "23.8")); // CDC still reports the wire value.
+    assert(!strcmp(dmm_value_text(), "23.8")); // The decoder retains the wire value.
     assert(!strcmp(dmm_mode_name(), "TEMP"));
     assert(!strcmp(last_usb_mode, "TEMPF"));
     assert(!strcmp(last_usb_value, "74.8"));
-    assert(!strcmp(last_usb_unit, "DEGF"));
+    assert(!strcmp(last_usb_unit, "DEGF") && last_usb_valid);
     dmm_toggle_relative();
     make_frame("0248", 8, 0, 0, 0x20, frame);
     assert(parse_frame(frame));
     assert(!strcmp(dmm_display_value(), "1.8000"));
     dmm_step_group(DMM_GROUP_SENSE, -1);
     assert(!dmm_rel_active && !strcmp(dmm_display_value(), "24.8"));
+    assert(!strcmp(last_usb_mode, "TEMP") && !strcmp(last_usb_unit, "DEGC"));
     make_frame("0077", 0, 0, 0, 0x10, frame);
     assert(parse_frame(frame));
     assert(!strcmp(dmm_display_value(), "25")); // Do not apply C->F twice.
@@ -430,6 +431,38 @@ static void test_selected_temperature_scale(void) {
     make_frame("0018", 1, 0, 0, 0x20, frame);
     assert(parse_frame(frame));
     assert(!strcmp(dmm_display_value(), "0")); // -0.4 F rounds to zero.
+}
+
+static void test_usb_telemetry_waits_for_real_frames(void) {
+    uint8_t frame[9];
+    setup(DMM_MODE_LIVE);
+    dmm_apply_missing_uart_fallback();
+    assert(!strcmp(dmm_value_text(), "L1UE"));
+    ui_dmm_send_usb_telemetry();
+    assert(!strcmp(last_usb_mode, "LIVE") && !last_usb_value[0] && !last_usb_valid);
+
+    // The first true IDLE frame is unchanged in text but must notify CDC.
+    make_frame("L1UE", 0, 0, 0, 0, frame);
+    assert(parse_frame(frame));
+    ui_dmm_send_usb_telemetry();
+    assert(!strcmp(last_usb_value, "IDLE") && last_usb_valid);
+    assert(!parse_frame(frame));
+
+    make_frame("00L0", 0, 0, 0, 0, frame);
+    assert(parse_frame(frame));
+    dmm_live_wire_alert = 0;
+    ui_dmm_send_usb_telemetry();
+    assert(!strcmp(last_usb_value, "LIVE") && last_usb_valid);
+
+    setup(DMM_MODE_TEMP);
+    ui.dmm_mode = DMM_MODE_TEMP_F;
+    dmm_apply_missing_uart_fallback();
+    ui_dmm_send_usb_telemetry();
+    assert(!strcmp(last_usb_mode, "TEMPF") && !last_usb_value[0] && !last_usb_valid);
+    make_frame("0000", 0, 0, 0, 0x20, frame);
+    assert(parse_frame(frame));
+    ui_dmm_send_usb_telemetry();
+    assert(!strcmp(last_usb_value, "32") && last_usb_valid);
 }
 
 // The scope ranges have the multimeter's problem and the same cure: one
@@ -489,6 +522,7 @@ int main(void) {
     test_temperature_scale_changes_only_with_accepted_reading();
     test_dmm_group_selection();
     test_selected_temperature_scale();
+    test_usb_telemetry_waits_for_real_frames();
     test_scope_ranges_are_readable();
     test_all_numeric_digits();
     test_status_and_rejected_frames();

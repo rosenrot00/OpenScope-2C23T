@@ -571,24 +571,6 @@ static const uint16_t D_PLOT_DOT = RGB565(52, 62, 78);
 static const uint16_t D_PLOT_AXIS = RGB565(86, 100, 118);
 
 enum {
-    DMM_MODE_AUTO,
-    DMM_MODE_DCV,
-    DMM_MODE_ACV,
-    DMM_MODE_RES,
-    DMM_MODE_DIODE,
-    DMM_MODE_CAP,
-    DMM_MODE_LIVE,
-    DMM_MODE_CONT,
-    DMM_MODE_TEMP,
-    DMM_MODE_AC_HI_CURR,
-    DMM_MODE_DC_HI_CURR,
-    DMM_MODE_AC_LO_CURR,
-    DMM_MODE_DC_LO_CURR,
-    DMM_MODE_TEMP_F, // UI only; the meter IC has one temperature command.
-    DMM_MODE_COUNT,
-};
-
-enum {
     DMM_GROUP_VOLTAGE,
     DMM_GROUP_TEST,
     DMM_GROUP_SENSE,
@@ -8150,20 +8132,17 @@ static void dmm_pause_for_menu_overlay(void) {
 }
 
 void ui_dmm_send_usb_telemetry(void) {
-    extern void usb_cdc_send_dmm(const char *mode, const char *val, const char *unit, uint8_t valid);
-    if (ui.dmm_mode == DMM_MODE_TEMP_F) {
-        usb_cdc_send_dmm("TEMPF", dmm_live_display_value(), "DEGF", dmm_has_reading());
-        return;
+    if (dmm_is_temperature(ui.dmm_mode)) {
+        uint8_t fahrenheit = ui.dmm_mode == DMM_MODE_TEMP_F;
+        uint8_t real = dmm_reading_is_real();
+        usb_cdc_send_dmm(fahrenheit ? "TEMPF" : "TEMP", real ? dmm_live_display_value() : "",
+                         fahrenheit ? "DEGF" : "DEGC", real);
+    } else if (ui.dmm_mode == DMM_MODE_LIVE) {
+        uint8_t real = dmm_reading_is_real();
+        usb_cdc_send_dmm("LIVE", real ? (dmm_live_wire_active() ? "LIVE" : "IDLE") : "", "", real);
+    } else {
+        usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
     }
-    if (ui.dmm_mode == DMM_MODE_TEMP) {
-        usb_cdc_send_dmm("TEMP", dmm_live_display_value(), "DEGC", dmm_has_reading());
-        return;
-    }
-    if (ui.dmm_mode == DMM_MODE_LIVE) {
-        usb_cdc_send_dmm("LIVE", dmm_live_wire_detected() ? "LIVE" : "IDLE", "", 1u);
-        return;
-    }
-    usb_cdc_send_dmm(dmm_mode_name(), dmm_value_text(), dmm_unit_text(), dmm_has_reading());
 }
 
 static void dmm_apply_selected_mode(uint8_t mode) {
@@ -10813,7 +10792,6 @@ void ui_set_live_wire_detected(uint8_t detected) {
     dmm_live_wire_alert = detected;
     if (ui.mode == UI_MODE_DMM && ui.overlay == UI_OVERLAY_NONE) {
         ui_render_dmm_reading();
-        ui_dmm_send_usb_telemetry();
     }
 }
 
@@ -11302,4 +11280,8 @@ uint8_t ui_gen_wave(void) {
 
 uint8_t ui_gen_amplitude(void) {
     return ui.gen_amp_tenths_v;
+}
+
+uint8_t ui_gen_duty(void) {
+    return ui.gen_duty_percent;
 }
