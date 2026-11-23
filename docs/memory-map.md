@@ -52,7 +52,7 @@ staging area that straddles the bank boundary. It also reports how full the slot
 is and warns from 90% on:
 
 ```
-layout: f2c23t_hello.bin 268930 B / 495616 B app slot (54.3%)
+layout: f2c23t_hello.bin 269018 B / 495616 B app slot (54.3%)
 layout: app 0x8007000..0x8080000  stage 0x8080000..0x80f9000  bank 2
 ```
 

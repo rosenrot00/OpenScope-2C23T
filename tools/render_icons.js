@@ -28,6 +28,21 @@ const CUSTOM = {
   generator: svg24('<path d="M2 16h3.5V8h6v8h6V8H21"/><path d="M2 20h20" opacity="0.45"/>'),
 };
 
+// Multimeter key marks, matching the symbols printed on the device's keys.
+// Drawn in their own grids; the ICONS entry gives the on-screen width and
+// height, which keep each grid's aspect ratio.
+function svgGrid(w, h, body) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 ${w} ${h}" fill="none" ` +
+         'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
+}
+CUSTOM.key_dc = svgGrid(24, 16, '<path d="M3 4h18"/><path d="M3 12h3.5"/><path d="M10.25 12h3.5"/><path d="M17.5 12h3.5"/>');
+CUSTOM.key_ac = svgGrid(24, 16, '<path d="M2 8c2.5-6.5 7.5-6.5 10 0s7.5 6.5 10 0"/>');
+CUSTOM.key_diode_cont = svgGrid(38, 24,
+  '<path d="M1 12h6"/><path d="M7 6.5v11l9-5.5z" fill="#ffffff"/><path d="M16 6v12"/><path d="M16 12h4"/>' +
+  '<circle cx="25" cy="12" r="1.2" fill="#ffffff" stroke="none"/>' +
+  '<path d="M28 9a4 4 0 0 1 0 6"/><path d="M31 6.5a7.5 7.5 0 0 1 0 11"/><path d="M34 4a11 11 0 0 1 0 16"/>');
+CUSTOM.key_cap = svgGrid(24, 24, '<path d="M2 12h7"/><path d="M15 12h7"/><path d="M9 5v14"/><path d="M15 5v14"/>');
+
 function svg24(body) {
   return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" ' +
          'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
@@ -65,6 +80,11 @@ const ICONS = [
   ['edge_fall_sm', 'edge_fall', 11, 2.6],
   ['scope_sm', 'scope', 12, 2.2],
   ['generator_sm', 'generator', 12, 2.2],
+  // name, icon, width, stroke, height (when not square)
+  ['key_dc', 'key_dc', 16, 3.2, 11],
+  ['key_ac', 'key_ac', 16, 3.2, 11],
+  ['key_diode_cont', 'key_diode_cont', 32, 2.6, 20],
+  ['key_cap', 'key_cap', 19, 2.8],
 ];
 
 (async () => {
@@ -72,10 +92,10 @@ const ICONS = [
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch();
   const page = await browser.newPage({ deviceScaleFactor: 1 });
-  for (const [name, icon, size, stroke] of ICONS) {
+  for (const [name, icon, size, stroke, height] of ICONS) {
     let svg = CUSTOM[icon] || fs.readFileSync(path.join(src, icon + '.svg'), 'utf8');
     svg = svg.replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/width="24"/, `width="${size}"`).replace(/height="24"/, `height="${size}"`)
+      .replace(/width="24"/, `width="${size}"`).replace(/height="24"/, `height="${height || size}"`)
       .replace(/stroke="currentColor"/, 'stroke="#ffffff"')
       .replace(/stroke-width="[0-9.]+"/, `stroke-width="${stroke}"`);
     await page.setContent(`<html><body style="margin:0;background:transparent">${svg}</body></html>`);
