@@ -41,7 +41,7 @@
 // The build sets this (see VERSION in the Makefile); the literal is the
 // fallback for host builds, and tests/dmm.c checks the two agree.
 #ifndef FIRMWARE_VERSION_TEXT
-#define FIRMWARE_VERSION_TEXT "v2026.11.8"
+#define FIRMWARE_VERSION_TEXT "v2026.11.9"
 #endif
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1
@@ -243,7 +243,7 @@ typedef struct {
     uint16_t width;
     int16_t x0;
     int16_t center;
-    int16_t amp;
+    int16_t grid_height;
     int16_t min_y;
     int16_t max_y;
     int16_t y[SCOPE_TRACE_MAX_POINTS];
@@ -496,7 +496,7 @@ enum {
     BATTERY_MEASURE_MS = 10000,
     BATTERY_LOW_BLINK_MS = 2000,
     BATTERY_LOW_PCT = 10,
-    SCOPE_FRAME_MS = 60,
+    SCOPE_FRAME_MS = 40,
     SCOPE_STUB_FRAME_MS = 90,
     DMM_FAST_RENDER_MS = 80,
     DMM_STATS_ZERO_RESET_SAMPLES = 8,
@@ -4885,17 +4885,13 @@ static void scope_apply_settings(void) {
     scope_apply_settings_keep_frame(0);
 }
 
-static int16_t scope_scaled_sample_y(uint8_t ch, uint8_t raw, int16_t center, int16_t amp, int16_t min_y, int16_t max_y) {
-    int32_t mv = scope_raw_delta_mv(ch, raw);
-    int32_t vdiv = (int32_t)scope_vdiv_mv_for_channel(ch);
-    int32_t pixels;
-    int32_t y;
+static int32_t scope_mv_to_pixels(int32_t mv, int32_t vdiv, int16_t grid_height) {
+    return scope_signed_round_div(mv * grid_height, vdiv * (int32_t)SCOPE_Y_DIVS);
+}
 
-    if (vdiv <= 0) {
-        vdiv = 1;
-    }
-    pixels = (mv * amp) / (vdiv * 3);
-    y = (int32_t)center - pixels;
+static int16_t scope_scaled_sample_y(uint8_t ch, uint8_t raw, int16_t center, int16_t grid_height, int16_t min_y, int16_t max_y) {
+    int32_t y = center - scope_mv_to_pixels(scope_raw_delta_mv(ch, raw),
+                                             (int32_t)scope_vdiv_mv_for_channel(ch), grid_height);
     if (y < min_y) {
         return min_y;
     }
@@ -4905,30 +4901,56 @@ static int16_t scope_scaled_sample_y(uint8_t ch, uint8_t raw, int16_t center, in
     return (int16_t)y;
 }
 
-static uint8_t scope_display_sample_raw(uint16_t x, uint8_t ch, uint16_t width) {
-    if (!width) return 128u;
-    if (x > width) x = width;
-    uint16_t visible_samples = scope_visible_sample_count();
-    uint16_t idx = (uint16_t)((uint32_t)x * (visible_samples - 1u) / width);
+typedef struct {
+    uint16_t start;
+    uint16_t count;
+    uint8_t zoom;
+} scope_plot_window_t;
+
+static scope_plot_window_t scope_plot_window(void) {
+    scope_plot_window_t w;
+    w.count = scope_visible_sample_count();
+    w.zoom = ui.scope_display == SCOPE_DISPLAY_YT && scope_safe_timebase() < 3u;
     if (ui.scope_display == SCOPE_DISPLAY_ROLL) {
         int32_t h_offset = scope_trigger_locked ? 0 : scope_h_pos_sample_offset();
-        idx = (uint16_t)(((uint32_t)((int32_t)idx + (int32_t)scope_roll_offset + h_offset)) &
-                         (SCOPE_SAMPLE_COUNT - 1u));
+        w.start = (uint16_t)((scope_roll_offset + h_offset) & (SCOPE_SAMPLE_COUNT - 1u));
     } else {
-        idx = (uint16_t)(scope_capture_window_start() + idx);
+        w.start = scope_capture_window_start();
     }
-    return scope_samples[(uint16_t)(idx * 2u + (ch ? 1u : 0u))];
+    return w;
 }
 
-static int16_t scope_sample_y(uint16_t x,
+static uint8_t scope_plot_raw(scope_plot_window_t w, uint16_t x, uint8_t ch, uint16_t width,
+                              uint8_t interpolate) {
+    if (!width) return 128u;
+    if (x > width) x = width;
+    // In fast Y-T modes count is the number of sample *intervals* across 12 divisions.
+    uint16_t intervals = w.zoom && interpolate ? w.count : (uint16_t)(w.count - 1u);
+    uint32_t pos = (uint32_t)x * intervals;
+    uint16_t off = (uint16_t)(pos / width);
+    uint16_t idx = (uint16_t)(w.start + off);
+    if (w.zoom && idx >= SCOPE_SAMPLE_COUNT) idx = SCOPE_SAMPLE_COUNT - 1u;
+    idx &= SCOPE_SAMPLE_COUNT - 1u;
+    uint8_t a = scope_samples[2u * idx + ch];
+    if (!w.zoom || !interpolate || idx == SCOPE_SAMPLE_COUNT - 1u) return a;
+    uint8_t b = scope_samples[2u * (idx + 1u) + ch];
+    uint32_t fraction = pos - (uint32_t)off * width;
+    return (uint8_t)((a * (width - fraction) + b * fraction + width / 2u) / width);
+}
+
+static uint8_t scope_display_sample_raw(uint16_t x, uint8_t ch, uint16_t width) {
+    return scope_plot_raw(scope_plot_window(), x, ch, width, 0);
+}
+
+static int16_t scope_sample_y(scope_plot_window_t w, uint16_t x,
                               uint8_t ch2,
                               int16_t center,
-                              int16_t amp,
+                              int16_t grid_height,
                               uint16_t width,
                               int16_t min_y,
                               int16_t max_y) {
     if (!scope_frame_valid || !width) {
-        int16_t y = scope_sim_y(x, ch2, center, amp);
+        int16_t y = scope_sim_y(x, ch2, center, (int16_t)(grid_height / 3));
         if (y < min_y) {
             return min_y;
         }
@@ -4939,9 +4961,9 @@ static int16_t scope_sample_y(uint16_t x,
     }
 
     return scope_scaled_sample_y(ch2 ? 1u : 0u,
-                                 scope_display_sample_raw(x, ch2, width),
+                                 scope_plot_raw(w, x, ch2, width, 1),
                                  center,
-                                 amp,
+                                 grid_height,
                                  min_y,
                                  max_y);
 }
@@ -5995,14 +6017,13 @@ static void draw_scope_trigger_line(uint16_t gx, uint16_t gy, uint16_t gw, uint1
     uint16_t color = ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE ? C_WARN : scope_channel_color((uint8_t)(src + 1u));
     const char *level = scope_trigger_level_label();
     int16_t center;
-    int16_t amp = ui.chrome_visible ? 48 : 64;
 
     if (ui.scope_display == SCOPE_DISPLAY_XY ||
         !scope_ch_enabled[src]) {
         return;
     }
     center = scope_channel_center(scope_channel_base_center_for(src), src);
-    y = scope_scaled_sample_y(src, ui.scope_trigger_level, center, amp,
+    y = scope_scaled_sample_y(src, ui.scope_trigger_level, center, (int16_t)gh,
                               (int16_t)(gy + 1u), (int16_t)(gy + gh - 2u));
     for (uint16_t x = (uint16_t)(gx + 1u); x < (uint16_t)(gx + gw - 1u); x = (uint16_t)(x + 8u)) {
         lcd_rect(x, (uint16_t)y, 5, 1, color);
@@ -6227,7 +6248,7 @@ static void draw_scope_cursors(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t g
 static scope_trace_cache_t *scope_trace_prepare(uint8_t ch2,
                                                 int16_t x0,
                                                 int16_t center,
-                                                int16_t amp,
+                                                int16_t grid_height,
                                                 uint16_t width,
                                                 int16_t min_y,
                                                 int16_t max_y) {
@@ -6240,15 +6261,16 @@ static scope_trace_cache_t *scope_trace_prepare(uint8_t ch2,
         cache->width == width &&
         cache->x0 == x0 &&
         cache->center == center &&
-        cache->amp == amp &&
+        cache->grid_height == grid_height &&
         cache->min_y == min_y &&
         cache->max_y == max_y) {
         return cache;
     }
 
     uint8_t count = 0;
+    scope_plot_window_t window = scope_plot_window();
     for (uint16_t x = 0; x <= width && count < SCOPE_TRACE_MAX_POINTS; x = (uint16_t)(x + SCOPE_TRACE_STEP)) {
-        cache->y[count++] = scope_sample_y(x, ch2, center, amp, width, min_y, max_y);
+        cache->y[count++] = scope_sample_y(window, x, ch2, center, grid_height, width, min_y, max_y);
         if ((uint16_t)(x + SCOPE_TRACE_STEP) < x) {
             break;
         }
@@ -6263,24 +6285,16 @@ static scope_trace_cache_t *scope_trace_prepare(uint8_t ch2,
     cache->width = width;
     cache->x0 = x0;
     cache->center = center;
-    cache->amp = amp;
+    cache->grid_height = grid_height;
     cache->min_y = min_y;
     cache->max_y = max_y;
     return cache;
-}
-
-static int16_t scope_raw_to_y(uint8_t ch, uint8_t raw, int16_t center, int16_t amp, uint16_t gy, uint16_t gh) {
-    int16_t min_y = (int16_t)(gy + 1u);
-    int16_t max_y = (int16_t)(gy + gh - 2u);
-
-    return scope_scaled_sample_y(ch, raw, center, amp, min_y, max_y);
 }
 
 static void draw_scope_slow_roll_trace(uint8_t ch,
                                        int16_t x0,
                                        uint16_t width,
                                        int16_t center,
-                                       int16_t amp,
                                        uint16_t gy,
                                        uint16_t gh,
                                        uint16_t color) {
@@ -6303,7 +6317,8 @@ static void draw_scope_slow_roll_trace(uint8_t ch,
     for (uint16_t i = 0; i < count; ++i) {
         int16_t display_i = (int16_t)i + scope_roll_display_offset;
         int16_t x;
-        int16_t y = scope_raw_to_y(ch, scope_slow_roll_raw_at(ch, i), center, amp, gy, gh);
+        int16_t y = scope_scaled_sample_y(ch, scope_slow_roll_raw_at(ch, i), center, (int16_t)gh,
+                                           (int16_t)(gy + 1u), (int16_t)(gy + gh - 2u));
 
         if (display_i < 0 || display_i >= (int16_t)SCOPE_SLOW_ROLL_MAX_POINTS) {
             have_prev = 0;
@@ -6330,7 +6345,6 @@ static void draw_scope_trace(uint16_t color,
                              uint8_t ch2,
                              int16_t x0,
                              int16_t center,
-                             int16_t amp,
                              uint16_t width,
                              uint16_t gy,
                              uint16_t gh) {
@@ -6342,7 +6356,7 @@ static void draw_scope_trace(uint16_t color,
     trace = scope_trace_prepare(ch2,
                                 x0,
                                 center,
-                                amp,
+                                (int16_t)gh,
                                 width,
                                 (int16_t)(gy + 1u),
                                 (int16_t)(gy + gh - 2u));
@@ -6384,6 +6398,8 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
     uint16_t math_color = RGB565(255, 0, 255);
     uint16_t width = (uint16_t)(gw - 3u);
     uint8_t slow_roll = scope_slow_roll_active();
+    scope_plot_window_t window = {0};
+    if (!slow_roll) window = scope_plot_window();
     uint16_t sample_count = slow_roll ? scope_slow_roll_count :
         (uint16_t)(width / SCOPE_TRACE_STEP + 1u);
     if (!slow_roll && sample_count > SCOPE_TRACE_MAX_POINTS) sample_count = SCOPE_TRACE_MAX_POINTS;
@@ -6407,14 +6423,14 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
             raw1 = scope_slow_roll_raw_at(1, i);
         } else {
             x_offset = (uint16_t)(i * SCOPE_TRACE_STEP);
-            raw0 = scope_display_sample_raw(x_offset, 0, width);
-            raw1 = scope_display_sample_raw(x_offset, 1, width);
+            raw0 = scope_plot_raw(window, x_offset, 0, width, 1);
+            raw1 = scope_plot_raw(window, x_offset, 1, width, 1);
         }
         int32_t mv0 = scope_raw_delta_mv(0, raw0);
         int32_t mv1 = scope_raw_delta_mv(1, raw1);
         int32_t mv = scope_math_op == 0u ? mv0 + mv1 :
             (scope_math_op == 1u ? mv0 - mv1 : mv1 - mv0);
-        int32_t computed_y = center_y - (mv * 64) / (vdiv * 3);
+        int32_t computed_y = center_y - scope_mv_to_pixels(mv, vdiv, (int16_t)gh);
         if (computed_y < gy + 1) computed_y = gy + 1;
         if (computed_y > gy + gh - 2) computed_y = gy + gh - 2;
         int16_t x = (int16_t)(gx + 1u + x_offset);
@@ -6480,15 +6496,15 @@ static void draw_scope_immersive(void) {
             int16_t ch1_center = scope_channel_center((int16_t)(gy + gh / 2u - 28u), 0);
             int16_t ch2_center = scope_channel_center((int16_t)(gy + gh / 2u + 28u), 1);
             if (scope_slow_roll_active()) {
-                draw_scope_slow_roll_trace(0, plot_x0, plot_w, ch1_center, 64, gy, gh, C_CH1);
-                draw_scope_slow_roll_trace(1, plot_x0, plot_w, ch2_center, 64, gy, gh, C_CH2);
+                draw_scope_slow_roll_trace(0, plot_x0, plot_w, ch1_center, gy, gh, C_CH1);
+                draw_scope_slow_roll_trace(1, plot_x0, plot_w, ch2_center, gy, gh, C_CH2);
             } else if (scope_fft_src == 4u) {
                 ui_draw_bode(gx, gy, gw, gh);
             } else {
                 draw_scope_afterglow_trace(0, plot_x0, plot_w, C_CH1);
                 draw_scope_afterglow_trace(1, plot_x0, plot_w, C_CH2);
-                draw_scope_trace(C_CH1, 0, plot_x0, ch1_center, 64, plot_w, gy, gh);
-                draw_scope_trace(C_CH2, 1, plot_x0, ch2_center, 64, plot_w, gy, gh);
+                draw_scope_trace(C_CH1, 0, plot_x0, ch1_center, plot_w, gy, gh);
+                draw_scope_trace(C_CH2, 1, plot_x0, ch2_center, plot_w, gy, gh);
             }
             if (scope_fft_src != 4u) {
                 ui_draw_math_waveform(gx, gy, gw, gh);

@@ -71,7 +71,7 @@ static void test_sine_seam(void) {
         for (uint16_t x = 0; x <= visible - 1u; ++x) {
             uint8_t raw = scope_samples[(offset + x) * 2u + ch];
             int16_t expected = scope_scaled_sample_y(ch, raw, 0, 30, -10000, 10000);
-            assert(scope_sample_y(x, ch, 0, 30, (uint16_t)(visible - 1u), -10000, 10000) == expected);
+            assert(scope_sample_y(scope_plot_window(), x, ch, 0, 30, (uint16_t)(visible - 1u), -10000, 10000) == expected);
         }
     }
 }
@@ -130,6 +130,21 @@ static void test_window_bounds(void) {
 }
 
 int main(void) {
+    setup();
+    ui.scope_timebase = 0;
+    scope_plot_window_t w = scope_plot_window();
+    assert(w.count == 30 && w.zoom);
+    scope_samples[2u * w.start] = 40;
+    scope_samples[2u * (w.start + 1u)] = 200;
+    assert(scope_plot_raw(w, 5, 0, 300, 1) == 120);
+    assert(scope_plot_raw(w, 10, 0, 300, 1) == 200);
+    assert(scope_display_sample_raw(5, 0, 300) == 40);
+    w.start = SCOPE_SAMPLE_COUNT - w.count;
+    scope_samples[2u * (SCOPE_SAMPLE_COUNT - 1u)] = 37;
+    assert(scope_plot_raw(w, 300, 0, 300, 1) == 37);
+    assert(scope_mv_to_pixels(1000, 1000, 190) == 24);
+    assert(scope_mv_to_pixels(-1000, 1000, 190) == -24);
+    assert(scope_mv_to_pixels(4000, 1000, 190) == 95);
     test_sine_seam();
     test_incomplete_trigger_windows();
     test_window_bounds();

@@ -300,7 +300,7 @@ static void test_trigger_line_position(void) {
         for (uint16_t raw = 12; raw <= 243; raw += 17) {
             ui.scope_trigger_level = (uint8_t)raw;
             int16_t center = scope_channel_center(scope_channel_base_center_for(ch), ch);
-            int16_t expected_y = scope_scaled_sample_y(ch, (uint8_t)raw, center, 64, 29, 216);
+            int16_t expected_y = scope_scaled_sample_y(ch, (uint8_t)raw, center, 190, 29, 216);
             lcd_render(render_trigger_line, 0);
             assert(frame_buffer[(uint32_t)expected_y * LCD_WIDTH + 33u] == scope_channel_color(ch + 1u));
         }

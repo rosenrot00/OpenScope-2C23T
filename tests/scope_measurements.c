@@ -249,12 +249,12 @@ static void test_math(void) {
     math_lines = 0;
     scope_math_op = 0;
     ui_draw_math_waveform(10, 25, 300, 150);
-    assert(math_lines && math_first_y == 49 && math_last_y == 49);
+    assert(math_lines && math_first_y == 55 && math_last_y == 55);
     math_lines = 0;
     scope_math_op = 2;
     scope_probe_x10[1] = 1;
     ui_draw_math_waveform(10, 25, 300, 150);
-    assert(math_lines && math_first_y == 89 && math_last_y == 89);
+    assert(math_lines && math_first_y == 90 && math_last_y == 90);
     math_lines = 0;
     scope_ch_enabled[1] = 0;
     ui_draw_math_waveform(10, 25, 300, 150);
