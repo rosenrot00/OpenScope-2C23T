@@ -535,7 +535,6 @@ enum {
 
 static const uint16_t C_BG = RGB565(2, 4, 8);
 static const uint16_t C_TOP = RGB565(8, 14, 22);
-static const uint16_t C_PANEL_2 = RGB565(20, 30, 44);
 static const uint16_t C_GRID = RGB565(26, 36, 48);
 static const uint16_t C_TEXT = RGB565(250, 252, 255);
 static const uint16_t C_MUTED = RGB565(148, 163, 184);
@@ -5272,47 +5271,8 @@ static void draw_scope_cursor_readout(uint16_t gx, uint16_t gy, uint16_t gw, uin
     (void)bg;
 }
 
-static void draw_scope_calibration_overlay(void) {
-    uint16_t x = 38;
-    uint16_t y = 78;
-    uint16_t w = 244;
-    uint16_t h = 84;
-    uint16_t box_bg = C_TEXT;
-    uint16_t box_fg = C_BG;
-    uint16_t done;
-
-    if (!scope_auto_zero_active) {
-        return;
-    }
-
-    lcd_rect(x, y, w, h, box_bg);
-    lcd_frame(x, y, w, h, C_SCOPE);
-    lcd_rect(x, y, w, 4, C_SCOPE);
-    lcd_text_center(x, (uint16_t)(y + 13u), w, "BASELINE CAL", box_fg, box_bg, 2);
-    if ((scope_auto_zero_mask & 0x03u) == 0x03u) {
-        uint16_t ch1_w = lcd_text_width("CH1", 2);
-        uint16_t sep_w = lcd_text_width(" & ", 2);
-        uint16_t ch2_w = lcd_text_width("CH2", 2);
-        uint16_t tx = (uint16_t)(x + (w - ch1_w - sep_w - ch2_w) / 2u);
-        lcd_text(tx, (uint16_t)(y + 38u), "CH1", C_CH1, box_bg, 2);
-        tx = (uint16_t)(tx + ch1_w);
-        lcd_text(tx, (uint16_t)(y + 38u), " & ", box_fg, box_bg, 2);
-        tx = (uint16_t)(tx + sep_w);
-        lcd_text(tx, (uint16_t)(y + 38u), "CH2", C_CH2, box_bg, 2);
-    } else if (scope_auto_zero_mask & 0x02u) {
-        lcd_text_center(x, (uint16_t)(y + 38u), w, "CH2", C_CH2, box_bg, 2);
-    } else {
-        lcd_text_center(x, (uint16_t)(y + 38u), w, "CH1", C_CH1, box_bg, 2);
-    }
-    lcd_text_center(x, (uint16_t)(y + 58u), w, "REMOVE PROBE  WAIT", C_PANEL_2, box_bg, 1);
-    done = (uint16_t)(120u - (scope_auto_zero_steps_left > 120u ? 120u : scope_auto_zero_steps_left));
-    lcd_frame((uint16_t)(x + 18u), (uint16_t)(y + 72u), (uint16_t)(w - 36u), 5, C_GRID);
-    lcd_rect((uint16_t)(x + 19u),
-             (uint16_t)(y + 73u),
-             (uint16_t)(((uint32_t)(w - 38u) * done) / 120u),
-             3,
-             C_SCOPE);
-}
+// Drawn as a rounded dialog further down, next to the other dialogs.
+static void draw_scope_calibration_overlay(void);
 
 static int32_t scope_raw_delta_mv(uint8_t idx, uint8_t raw) {
     int32_t delta = (int32_t)raw - 128;
@@ -7255,6 +7215,27 @@ static void ui_draw_modal(const char *icon, uint16_t tone, uint16_t tint,
             x = ui_draw_keycap((int16_t)(x + 14), Y + 92, 0, "MENU", D_CARD);
             gfx_text((int16_t)(x + 5), Y + 93, &font_small, cancel, D_SUB, D_CARD);
         }
+    }
+}
+
+// Baseline calibration (auto-zero) as a rounded dialog: the channels being
+// zeroed as coloured tags, what to do, and the progress of the 120 steps.
+static void draw_scope_calibration_overlay(void) {
+    enum { STEPS = 120 };
+    uint16_t done;
+    int16_t right = MODAL_X + MODAL_W - 14;
+
+    if (!scope_auto_zero_active) {
+        return;
+    }
+    done = (uint16_t)(STEPS - (scope_auto_zero_steps_left > STEPS ? STEPS : scope_auto_zero_steps_left));
+    ui_draw_modal(ICON_SCOPE_MD, D_SCOPE, gfx_blend(D_SCOPE, D_CARD, 4), "Baseline calibration",
+                  "Remove the probes and wait.", 0, (int16_t)(done * 100u / STEPS), 0, 0);
+    if (scope_auto_zero_mask & 0x02u) {
+        dmm_draw_pill(right, MODAL_Y + 53, "CH2", gfx_blend(C_CH2, D_CARD, 4), C_CH2, D_CARD, &right);
+    }
+    if (scope_auto_zero_mask & 0x01u) {
+        dmm_draw_pill(right, MODAL_Y + 53, "CH1", gfx_blend(C_CH1, D_CARD, 4), C_CH1, D_CARD, &right);
     }
 }
 
