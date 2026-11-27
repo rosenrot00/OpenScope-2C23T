@@ -41,7 +41,7 @@
 // The build sets this (see VERSION in the Makefile); the literal is the
 // fallback for host builds, and tests/dmm.c checks the two agree.
 #ifndef FIRMWARE_VERSION_TEXT
-#define FIRMWARE_VERSION_TEXT "v2026.11.9"
+#define FIRMWARE_VERSION_TEXT "v2026.11.10"
 #endif
 #ifndef SCOPE_UI_SAFE_STUB
 #define SCOPE_UI_SAFE_STUB 1
@@ -194,6 +194,7 @@ typedef struct {
     uint8_t charging;
     uint8_t full;
     uint8_t usb_configured;
+    uint8_t generator;
 } battery_snapshot_t;
 
 typedef struct {
@@ -210,8 +211,7 @@ typedef struct {
 } dmm_stats_t;
 
 enum {
-    SCOPE_TRACE_STEP = 3,
-    SCOPE_TRACE_MAX_POINTS = 101,
+    SCOPE_TRACE_MAX_POINTS = LCD_WIDTH,
     SCOPE_SAMPLE_COUNT = 2048,
     SCOPE_SAMPLE_BYTES = SCOPE_SAMPLE_COUNT * 2,
     SCOPE_SAMPLES_PER_DIV = 25,
@@ -237,7 +237,7 @@ typedef struct {
     uint8_t valid;
     uint8_t ch2;
     uint8_t timebase;
-    uint8_t count;
+    uint16_t count;
     uint16_t phase;
     uint16_t frame_id;
     uint16_t width;
@@ -246,8 +246,9 @@ typedef struct {
     int16_t grid_height;
     int16_t min_y;
     int16_t max_y;
-    int16_t y[SCOPE_TRACE_MAX_POINTS];
+    uint8_t y[SCOPE_TRACE_MAX_POINTS];
 } scope_trace_cache_t;
+_Static_assert(LCD_HEIGHT < UINT8_MAX, "trace cache needs an off-screen Y code");
 
 static ui_state_t ui = {
     .mode = UI_MODE_DMM,
@@ -268,6 +269,11 @@ static uint8_t ui_load_peak_pct;
 static uint16_t ui_render_ms_x10;
 static uint16_t scope_frame_age_ms;
 static uint16_t scope_frame_interval_x10ms;
+// DWT wall time, independent of LCD transfers and the UI polling cadence.
+// About 750 ms at 192 MHz and 600 ms at 240 MHz.
+enum { SCOPE_AUTO_SWEEP_CYCLES = 144000000u };
+static enum { SWEEP_IDLE, SWEEP_ARMED, SWEEP_RETRY, SWEEP_FREE } scope_auto_sweep;
+static uint32_t scope_auto_sweep_start;
 static uint32_t ui_last_render_ticks;
 static uint32_t ui_fw_update_sequence;
 static uint16_t ui_fw_update_error_ms;
@@ -332,8 +338,12 @@ static uint8_t scope_coupling_dc[2] = {1, 1};
 static int16_t scope_zero_offset[2];
 static uint8_t scope_auto_zero_active;
 static uint8_t scope_auto_zero_mask;
-static uint8_t scope_auto_zero_stable_count;
-static uint8_t scope_auto_zero_steps_left;
+static struct {
+    uint16_t bias[2][SETTINGS_SCOPE_RANGE_COUNT];
+    struct { int16_t lo, hi; uint16_t best, error; } search[2];
+    uint16_t delay_ms, age_ms, result_ms;
+    uint8_t range, done, arm, failed;
+} scope_cal;
 static uint8_t scope_auto_time_active;
 static uint8_t scope_auto_time_mask;
 static uint8_t scope_auto_time_steps_left;
@@ -365,8 +375,8 @@ static uint8_t scope_roll_trigger_pending;
 static uint16_t scope_roll_trigger_seq;
 static uint16_t scope_roll_trigger_target_seq;
 static int16_t scope_roll_display_offset;
-static int16_t scope_after_y[2][SCOPE_TRACE_MAX_POINTS];
-static uint8_t scope_after_count[2];
+static uint8_t scope_after_y[2][SCOPE_TRACE_MAX_POINTS];
+static uint16_t scope_after_count[2];
 static uint8_t scope_after_valid[2];
 static uint8_t ui_math_menu_visible = 0; // 0 = Hidden, 1 = Displayed on Screen
 static uint8_t scope_math_selected = 0; // 0=MODE, 1=MATH OP, 2=FFT DISPLAY/XY, 3=WINDOW, 4=CLEAR HISTORY, 5=HIDE TRACES
@@ -790,7 +800,7 @@ static uint32_t scope_sample_period_ns(void);
 static int8_t scope_clamp_channel_pos(uint8_t idx, int16_t pos);
 static uint32_t scope_estimate_freq_hz_window(uint8_t idx, uint16_t start, uint16_t end, uint8_t min_raw, uint8_t max_raw);
 static void scope_auto_zero_begin(uint8_t mask);
-static void scope_auto_zero_service(void);
+static uint8_t scope_auto_zero_tick(uint32_t elapsed_ms);
 static void scope_auto_cancel(void);
 static void scope_auto_timeout_service(void);
 static void scope_auto_setup_request(uint8_t mask);
@@ -966,6 +976,7 @@ static void battery_snapshot_store(void) {
     battery_snapshot.charging = battery_is_charging();
     battery_snapshot.full = battery_display_full();
     battery_snapshot.usb_configured = usb_cdc_is_configured();
+    battery_snapshot.generator = gen_running || gen_output_applied;
 }
 
 static uint8_t battery_snapshot_changed(void) {
@@ -973,17 +984,19 @@ static uint8_t battery_snapshot_changed(void) {
     uint8_t charging = battery_is_charging();
     uint8_t full = battery_display_full();
     uint8_t usb_configured = usb_cdc_is_configured();
+    uint8_t generator = gen_running || gen_output_applied;
 
     if (!battery_snapshot.valid ||
         pct != battery_snapshot.pct ||
         charging != battery_snapshot.charging ||
         full != battery_snapshot.full ||
-        usb_configured != battery_snapshot.usb_configured) {
+        usb_configured != battery_snapshot.usb_configured || generator != battery_snapshot.generator) {
         battery_snapshot.valid = 1;
         battery_snapshot.pct = pct;
         battery_snapshot.charging = charging;
         battery_snapshot.full = full;
         battery_snapshot.usb_configured = usb_configured;
+        battery_snapshot.generator = generator;
         return 1;
     }
     return 0;
@@ -1123,6 +1136,12 @@ static void scope_roll_trigger_reset(void) {
     scope_roll_trigger_seq = 0;
     scope_roll_trigger_target_seq = 0;
     scope_roll_display_offset = 0;
+}
+
+static void scope_trigger_reset(void) {
+    scope_auto_sweep = SWEEP_IDLE;
+    scope_trigger_locked = 0;
+    scope_roll_trigger_reset();
 }
 
 static uint8_t scope_safe_vdiv(void) {
@@ -2524,8 +2543,10 @@ static uint16_t scope_visible_sample_count(void) {
     if (count < 2u) {
         count = 2u;
     }
-    if (count > SCOPE_VISIBLE_SAMPLE_COUNT) {
-        count = SCOPE_VISIBLE_SAMPLE_COUNT;
+    uint16_t limit = scope_dense_capture(scope_timebase_unit_ns[timebase]) ?
+                     SCOPE_SAMPLE_COUNT - 1u : SCOPE_VISIBLE_SAMPLE_COUNT;
+    if (count > limit) {
+        count = limit;
     }
     return (uint16_t)count;
 }
@@ -4258,7 +4279,7 @@ static void scope_trace_invalidate(void) {
         for (uint8_t ch = 0; ch < 2u; ++ch) {
             if (scope_ch_enabled[ch] && scope_trace_cache[ch].valid) {
                 scope_after_count[ch] = scope_trace_cache[ch].count;
-                for (uint8_t i = 0; i < scope_trace_cache[ch].count; ++i) {
+                for (uint16_t i = 0; i < scope_trace_cache[ch].count; ++i) {
                     scope_after_y[ch][i] = scope_trace_cache[ch].y[i];
                 }
                 scope_after_valid[ch] = 1;
@@ -4482,7 +4503,9 @@ static uint16_t scope_normal_frame_interval_ms(void) {
 }
 
 static uint16_t scope_frame_interval_ms(void) {
-    return scope_slow_roll_active() ? scope_slow_roll_interval_ms() : scope_normal_frame_interval_ms();
+    if (scope_slow_roll_active()) return scope_slow_roll_interval_ms();
+    if (ui.scope_trigger_mode == SCOPE_TRIGGER_AUTO && scope_auto_sweep == SWEEP_RETRY) return 20u;
+    return scope_normal_frame_interval_ms();
 }
 
 static void scope_slow_roll_update_stats(void) {
@@ -4669,8 +4692,13 @@ static void scope_copy_capture_samples(void) {
     }
 }
 
-static uint8_t scope_trigger_accepts_capture(uint8_t found) {
-    if (scope_auto_zero_active || scope_auto_channel_mask) {
+static void scope_auto_sweep_arm(uint32_t now) {
+    scope_auto_sweep_start = now;
+    scope_auto_sweep = SWEEP_ARMED;
+}
+
+static uint8_t scope_trigger_accepts_capture(uint8_t found, uint32_t now) {
+    if (scope_auto_channel_mask) {
         return 1;
     }
     if (scope_slow_roll_active()) {
@@ -4681,12 +4709,24 @@ static uint8_t scope_trigger_accepts_capture(uint8_t found) {
         return 1;
     }
     if (ui.scope_trigger_mode == SCOPE_TRIGGER_AUTO) {
+        if (scope_auto_time_active || bode_is_sweeping) return 1;
+        if (found) {
+            scope_auto_sweep_arm(now);
+            return 1;
+        }
+        if (scope_auto_sweep == SWEEP_FREE) return 1;
+        if (now - scope_auto_sweep_start < SCOPE_AUTO_SWEEP_CYCLES) {
+            scope_auto_sweep = SWEEP_RETRY;
+            return 0;
+        }
+        scope_auto_sweep = SWEEP_FREE;
         return 1;
     }
     return found;
 }
 
-static uint8_t scope_poll_frame(void) {
+static uint8_t scope_poll_frame(uint8_t *arm_after_render) {
+    *arm_after_render = 0;
     scope_auto_timeout_service();
     if (!scope_hw_enabled()) {
         scope_frame_valid = 0;
@@ -4797,25 +4837,34 @@ static uint8_t scope_poll_frame(void) {
         scope_trigger_locked = 0;
         scope_trigger_offset = 0;
         scope_slow_roll_update_stats();
-        scope_auto_zero_service();
         scope_auto_channel_service();
         scope_trace_invalidate();
         return 1;
     }
 
-    if (!scope_hw_capture(scope_capture_samples, SCOPE_SAMPLE_BYTES, scope_safe_timebase())) {
+    if (ui.scope_trigger_mode == SCOPE_TRIGGER_AUTO && scope_auto_sweep == SWEEP_IDLE) {
+        scope_auto_sweep_arm(board_cycle_counter_read());
+    }
+    if (!scope_hw_read_capture(scope_capture_samples, SCOPE_SAMPLE_BYTES, scope_safe_timebase())) {
         return 0;
     }
-    if (!scope_auto_zero_active &&
-        ui.scope_display == SCOPE_DISPLAY_YT &&
+    // On legacy hardware LCD updates disturb CH2 during the next dense Y-T capture.
+    // Autoset and Bode own their configuration changes and rearm sequence.
+    uint8_t quiet = scope_dense_capture(scope_timebase_unit_ns_value()) &&
+                    ui.scope_display == SCOPE_DISPLAY_YT && !scope_auto_time_active &&
+                    !scope_auto_channel_mask && !bode_is_sweeping;
+    if (!quiet) scope_hw_arm();
+    if (ui.scope_display == SCOPE_DISPLAY_YT &&
         scope_ch_enabled[scope_trigger_source_index()]) {
         trigger_found = scope_find_trigger_offset(scope_capture_samples, &trigger_offset);
     } else {
         trigger_found = 0;
     }
-    if (!scope_trigger_accepts_capture(trigger_found)) {
+    if (!scope_trigger_accepts_capture(trigger_found, board_cycle_counter_read())) {
+        if (quiet) scope_hw_arm();
         return 0;
     }
+    *arm_after_render = quiet;
     scope_copy_capture_samples();
 
     scope_frame_valid = 1;
@@ -4829,7 +4878,6 @@ static uint8_t scope_poll_frame(void) {
     if (trigger_found && ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE && !scope_auto_channel_mask) {
         ui.running = 0;
     }
-    scope_auto_zero_service();
     if (scope_auto_time_service()) {
         scope_trace_invalidate();
         return 1;
@@ -4840,9 +4888,9 @@ static uint8_t scope_poll_frame(void) {
 }
 
 static void scope_apply_settings_keep_frame(uint8_t keep_frame) {
+    scope_auto_sweep = SWEEP_IDLE;
     scope_auto_zero_active = 0;
     scope_auto_zero_mask = 0;
-    scope_auto_zero_stable_count = 0;
     if (!keep_frame) {
         scope_frame_valid = 0;
         scope_trigger_offset = 0;
@@ -5304,12 +5352,9 @@ static uint32_t scope_raw_span_mv(uint8_t idx, uint8_t raw_span) {
 }
 
 static uint32_t scope_estimate_freq_hz_window(uint8_t idx, uint16_t start, uint16_t end, uint8_t min_raw, uint8_t max_raw) {
-    uint8_t level;
-    uint8_t prev;
     uint16_t first = 0u;
     uint16_t last = 0u;
     uint16_t crossings = 0;
-    uint32_t span_samples;
     float period_ns;
 
     if (idx >= 2u) {
@@ -5321,31 +5366,37 @@ static uint32_t scope_estimate_freq_hz_window(uint8_t idx, uint16_t start, uint1
     if (start + 2u >= end) {
         return 0;
     }
-    if ((uint8_t)(max_raw - min_raw) < 8u) {
+    int span = (int)max_raw - min_raw;
+    if (span < 8) {
         return 0;
     }
-    level = (uint8_t)(((uint16_t)min_raw + (uint16_t)max_raw) / 2u);
-    prev = scope_samples[(uint16_t)(start * 2u + idx)];
-    for (uint16_t i = (uint16_t)(start + 1u); i < end; ++i) {
-        uint8_t cur = scope_samples[(uint16_t)(i * 2u + idx)];
-        if (prev <= level && cur > level) {
+    // Require both halves of a cycle. Chatter around the midpoint is not
+    // another period; no time-based debounce is needed even at two samples/cycle.
+    uint8_t mid = (uint8_t)(min_raw + span / 2);
+    uint8_t low = (uint8_t)(mid - span / 8), high = (uint8_t)(mid + span / 8);
+    uint8_t armed = 0;
+    for (uint16_t i = start; i < end; ++i) {
+        uint8_t cur = scope_samples[i * 2u + idx];
+        if (cur <= low) {
+            armed = 1;
+        } else if (armed && cur >= high) {
             if (!crossings) {
                 first = i;
             }
             last = i;
             ++crossings;
+            armed = 0;
         }
-        prev = cur;
     }
     if (crossings < 2u || last <= first) {
         return 0;
     }
-    span_samples = (uint32_t)(last - first);
-    period_ns = ((float)span_samples * (float)scope_sample_period_ns()) / (float)(crossings - 1u);
-    if (period_ns <= 0.0f) {
-        return 0;
-    }
-    return (uint32_t)(1000000000.0f / period_ns);
+    const uint8_t *a = &scope_samples[2u * first + idx];
+    const uint8_t *b = &scope_samples[2u * last + idx];
+    float span_samples = (float)(last - first) +
+        (float)(a[0] - high) / (a[0] - a[-2]) - (float)(b[0] - high) / (b[0] - b[-2]);
+    period_ns = span_samples * (float)scope_sample_period_ns() / (float)(crossings - 1u);
+    return (uint32_t)(1000000000.0f / period_ns + 0.5f);
 }
 
 static int32_t scope_filtered_mean_mv(uint8_t idx) {
@@ -5508,6 +5559,13 @@ static void scope_measure_value_for(char out[12], uint8_t idx, uint8_t measure) 
     }
     min_raw = scope_filtered_min_raw(idx);
     max_raw = scope_filtered_max_raw(idx);
+    uint8_t frame_min = scope_min_raw[idx], frame_max = scope_max_raw[idx];
+    if (scope_frame_valid && measure != SCOPE_MEASURE_FREQ &&
+        ((measure != SCOPE_MEASURE_VMAX && (frame_min == 0u || frame_min == 255u)) ||
+         (measure != SCOPE_MEASURE_VMIN && (frame_max == 255u || frame_max == 0u)))) {
+        scope_text_copy(out, "CLIP", 11);
+        return;
+    }
     span_raw = max_raw >= min_raw ? (uint8_t)(max_raw - min_raw) : 0u;
     min_mv = scope_raw_delta_mv(idx, min_raw);
     max_mv = scope_raw_delta_mv(idx, max_raw);
@@ -6086,14 +6144,47 @@ static void draw_scope_stub_trace(uint16_t gx,
 }
 #endif
 
+// Clip segments, not individual samples: two points outside on the same
+// side have no visible connection along the edge of the graticule.
+static void scope_trace_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                             int16_t top, int16_t bottom, uint16_t color) {
+    if ((y0 < top && y1 < top) || (y0 > bottom && y1 > bottom)) return;
+    int16_t a = y0 < top ? top : y0 > bottom ? bottom : y0;
+    int16_t b = y1 < top ? top : y1 > bottom ? bottom : y1;
+    int16_t dx = x1 - x0;
+    int32_t dy = (int32_t)y1 - y0;
+    if (b != y1) x1 = (int16_t)(x0 + (int32_t)(b - y0) * dx / dy);
+    if (a != y0) x0 += (int16_t)((int32_t)(a - y0) * dx / dy);
+    lcd_line(x0, a, x1, b, color);
+}
+
+// As on the original scope, join consecutive samples vertically at the
+// first sample's X. Coalesce flat runs without skipping any columns.
+static void scope_draw_columns(const uint8_t *y, uint16_t count, int16_t x0,
+                               int16_t top, int16_t bottom, uint8_t extra, uint16_t color) {
+    for (uint16_t i = 0; i < count;) {
+        uint16_t end = i + 1u;
+        int16_t a = y[i], b = end < count ? y[end] : a;
+        if (a == b) {
+            while (end < count && (end + 1u == count || y[end + 1u] == a)) ++end;
+        }
+        int16_t lo = a < b ? a : b;
+        int16_t hi = (a > b ? a : b) + extra;
+        if (lo < top) lo = top;
+        if (hi > bottom) hi = bottom;
+        if (lo <= hi) lcd_rect((uint16_t)(x0 + i), (uint16_t)lo, end - i,
+                               (uint16_t)(hi - lo + 1), color);
+        i = end;
+    }
+}
+
 static void draw_scope_afterglow_trace(uint8_t ch,
                                        int16_t x0,
                                        uint16_t width,
+                                       int16_t top, int16_t bottom,
                                        uint16_t color) {
-    if (!ui.scope_afterglow || !scope_after_valid[ch] || scope_after_count[ch] < 2u) {
-        return;
-    }
-    if (ch >= 2u || !scope_ch_enabled[ch]) {
+    if (ch >= 2u || !scope_ch_enabled[ch] || !ui.scope_afterglow ||
+        !scope_after_valid[ch] || scope_after_count[ch] < 2u) {
         return;
     }
 
@@ -6104,21 +6195,9 @@ static void draw_scope_afterglow_trace(uint8_t ch,
         return;
     }
 
-    int16_t prev_x = x0;
-    int16_t prev_y = scope_after_y[ch][0];
-    uint16_t i = SCOPE_TRACE_STEP;
-    uint16_t dim = scope_dim_color(color);
-
-    for (uint8_t point = 1; point < scope_after_count[ch]; ++point, i = (uint16_t)(i + SCOPE_TRACE_STEP)) {
-        if (i > width + SCOPE_TRACE_STEP) {
-            break;
-        }
-        int16_t x = (int16_t)(x0 + i);
-        int16_t y = scope_after_y[ch][point];
-        lcd_line(prev_x, prev_y, x, y, dim);
-        prev_x = x;
-        prev_y = y;
-    }
+    uint16_t count = scope_after_count[ch];
+    if (count > width + 1u) count = width + 1u;
+    scope_draw_columns(scope_after_y[ch], count, x0, top, bottom, 0, scope_dim_color(color));
 }
 
 static void draw_scope_xy(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh, uint16_t color) {
@@ -6227,13 +6306,11 @@ static scope_trace_cache_t *scope_trace_prepare(uint8_t ch2,
         return cache;
     }
 
-    uint8_t count = 0;
+    uint16_t count = 0;
     scope_plot_window_t window = scope_plot_window();
-    for (uint16_t x = 0; x <= width && count < SCOPE_TRACE_MAX_POINTS; x = (uint16_t)(x + SCOPE_TRACE_STEP)) {
-        cache->y[count++] = scope_sample_y(window, x, ch2, center, grid_height, width, min_y, max_y);
-        if ((uint16_t)(x + SCOPE_TRACE_STEP) < x) {
-            break;
-        }
+    for (; count <= width && count < SCOPE_TRACE_MAX_POINTS; ++count) {
+        cache->y[count] = (uint8_t)scope_sample_y(window, count, ch2, center, grid_height,
+                                                  width, 0, UINT8_MAX);
     }
 
     cache->valid = 1;
@@ -6249,6 +6326,101 @@ static scope_trace_cache_t *scope_trace_prepare(uint8_t ch2,
     cache->min_y = min_y;
     cache->max_y = max_y;
     return cache;
+}
+
+enum { PLOT_X = 8, PLOT_Y = 28, PLOT_W = 304, PLOT_H = 190 };
+typedef struct { int16_t x0, y0, x1, y1; } roll_rect_t;
+static struct {
+    int16_t y[2][SCOPE_SLOW_ROLL_MAX_POINTS];
+    char value[2][SCOPE_MEASURE_COUNT][12];
+    uint16_t count, seq;
+    int16_t offset;
+    uint8_t valid, timebase;
+} roll_painted;
+static roll_rect_t roll_damage;
+static uint8_t roll_partial;
+
+static void roll_include(int x0, int y0, int x1, int y1) {
+    if (y0 < PLOT_Y + 1) y0 = PLOT_Y + 1;
+    if (y1 > PLOT_Y + PLOT_H - 2) y1 = PLOT_Y + PLOT_H - 2;
+    if (y1 < y0) return;
+    if (x0 < roll_damage.x0) roll_damage.x0 = x0;
+    if (x1 > roll_damage.x1) roll_damage.x1 = x1;
+    if (y0 < roll_damage.y0) roll_damage.y0 = y0;
+    if (y1 > roll_damage.y1) roll_damage.y1 = y1;
+}
+
+static int roll_x(int i) {
+    return PLOT_X + 1 + i * (PLOT_W - 3) / (SCOPE_SLOW_ROLL_MAX_POINTS - 1);
+}
+
+static void roll_prepare_damage(void) {
+    uint16_t count = scope_slow_roll_count;
+    int offset = scope_roll_display_offset;
+    roll_partial = roll_painted.valid && roll_painted.timebase == ui.scope_timebase;
+    roll_damage = (roll_rect_t){LCD_WIDTH, LCD_HEIGHT, -1, -1};
+    // Before the ring fills, only the joining segment and the new tail can change.
+    unsigned start = 0;
+    unsigned end = SCOPE_SLOW_ROLL_MAX_POINTS;
+    if (roll_partial && !offset && !roll_painted.offset && count > roll_painted.count &&
+        count - roll_painted.count == (uint16_t)(scope_slow_roll_seq - roll_painted.seq)) {
+        start = roll_painted.count;
+        end = count;
+    }
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        int center = scope_channel_center(scope_channel_base_center_for(ch), ch);
+        int prev_old = start ? roll_painted.y[ch][start - 1] : INT16_MIN, prev_new = prev_old;
+        int prev_changed = 0;
+        if (!scope_ch_enabled[ch] || (scope_hide_traces & (1u << ch))) continue;
+        for (unsigned col = start; col < end; ++col) {
+            int i = (int)col - offset;
+            int old = roll_painted.y[ch][col];
+            int y = i >= 0 && i < count ?
+                    scope_scaled_sample_y(ch, scope_slow_roll_raw_at(ch, i), center,
+                                          PLOT_H, INT16_MIN + 1, INT16_MAX) : INT16_MIN;
+            int changed = old != y;
+            if (roll_partial && (changed || prev_changed)) {
+                int lo = INT16_MAX, hi = INT16_MIN;
+                if (y != INT16_MIN) { lo = hi = y; }
+                if (old != INT16_MIN && old < lo) lo = old;
+                if (old > hi) hi = old;
+                if (prev_new != INT16_MIN && y != INT16_MIN) {
+                    if (prev_new < lo) lo = prev_new;
+                    if (prev_new > hi) hi = prev_new;
+                }
+                if (prev_old != INT16_MIN && old != INT16_MIN) {
+                    if (prev_old < lo) lo = prev_old;
+                    if (prev_old > hi) hi = prev_old;
+                }
+                roll_include(roll_x(col ? col - 1 : col), lo, roll_x(col), hi + !ch);
+            }
+            roll_painted.y[ch][col] = y;
+            prev_old = old; prev_new = y; prev_changed = changed;
+        }
+    }
+    if (scope_measure_visible) {
+        for (uint8_t ch = 0; ch < 2; ++ch) {
+            unsigned rows = scope_measure_enabled_count(ch);
+            if (!rows) continue;
+            int y = PLOT_Y + PLOT_H - 20 - (rows - 1) * 18;
+            for (uint8_t m = 0; m < SCOPE_MEASURE_COUNT; ++m) {
+                if (!scope_measure_enabled_for(ch, m)) continue;
+                char value[12];
+                scope_measure_value_for(value, ch, m);
+                if (!ui_text_equal(value, roll_painted.value[ch][m])) {
+                    ui_text_copy(roll_painted.value[ch][m], value, sizeof(value));
+                    roll_include(ch ? LCD_WIDTH / 2 : PLOT_X, y,
+                                 ch ? PLOT_X + PLOT_W - 1 : LCD_WIDTH / 2, y + 16);
+                }
+                y += 18;
+            }
+        }
+    }
+    roll_painted.valid = 1;
+    roll_painted.timebase = ui.scope_timebase;
+    roll_painted.count = count;
+    roll_painted.seq = scope_slow_roll_seq;
+    roll_painted.offset = offset;
 }
 
 static void draw_scope_slow_roll_trace(uint8_t ch,
@@ -6270,31 +6442,41 @@ static void draw_scope_slow_roll_trace(uint8_t ch,
     }
 
     uint16_t count = scope_slow_roll_count;
+    int16_t top = (int16_t)(gy + 1u), bottom = (int16_t)(gy + gh - 2u);
     int16_t prev_x = 0;
     int16_t prev_y = 0;
     uint8_t have_prev = 0;
 
-    for (uint16_t i = 0; i < count; ++i) {
+    uint16_t first = 0;
+    if (roll_partial) {
+        // Include a neighbour on each side: a segment can cross the clip boundary.
+        int left = (roll_damage.x0 - x0) * (int)(SCOPE_SLOW_ROLL_MAX_POINTS - 1) / width - scope_roll_display_offset - 1;
+        int end = (roll_damage.x1 - x0) * (int)(SCOPE_SLOW_ROLL_MAX_POINTS - 1) / width - scope_roll_display_offset + 3;
+        if (end <= 0 || left >= count) return;
+        if (left > 0) first = (uint16_t)left;
+        if (end < count) count = (uint16_t)end;
+    }
+    for (uint16_t i = first; i < count; ++i) {
         int16_t display_i = (int16_t)i + scope_roll_display_offset;
         int16_t x;
-        int16_t y = scope_scaled_sample_y(ch, scope_slow_roll_raw_at(ch, i), center, (int16_t)gh,
-                                           (int16_t)(gy + 1u), (int16_t)(gy + gh - 2u));
-
         if (display_i < 0 || display_i >= (int16_t)SCOPE_SLOW_ROLL_MAX_POINTS) {
             have_prev = 0;
             continue;
         }
+        int16_t y = roll_partial ? roll_painted.y[ch][display_i] :
+            scope_scaled_sample_y(ch, scope_slow_roll_raw_at(ch, i), center, (int16_t)gh,
+                                  INT16_MIN, INT16_MAX);
         x = (int16_t)(x0 + ((uint32_t)(uint16_t)display_i * width) / (SCOPE_SLOW_ROLL_MAX_POINTS - 1u));
         if (!have_prev) {
-            lcd_rect((uint16_t)x, (uint16_t)y, 2, 2, color);
+            if (y >= top && y <= bottom) lcd_pixel(x, y, color);
             prev_x = x;
             prev_y = y;
             have_prev = 1;
             continue;
         }
-        lcd_line(prev_x, prev_y, x, y, color);
+        scope_trace_line(prev_x, prev_y, x, y, top, bottom, color);
         if (!ch) {
-            lcd_line(prev_x, (int16_t)(prev_y + 1), x, (int16_t)(y + 1), color);
+            scope_trace_line(prev_x, prev_y + 1, x, y + 1, top, bottom, color);
         }
         prev_x = x;
         prev_y = y;
@@ -6331,19 +6513,8 @@ static void draw_scope_trace(uint16_t color,
         return; 
     }
 
-    int16_t prev_x = x0;
-    int16_t prev_y = trace->y[0];
-    uint16_t i = SCOPE_TRACE_STEP;
-    for (uint8_t point = 1; point < trace->count; ++point, i = (uint16_t)(i + SCOPE_TRACE_STEP)) {
-        int16_t x = (int16_t)(x0 + i);
-        int16_t y = trace->y[point];
-        lcd_line(prev_x, prev_y, x, y, color);
-        if (!ch2) {
-            lcd_line(prev_x, (int16_t)(prev_y + 1), x, (int16_t)(y + 1), color);
-        }
-        prev_x = x;
-        prev_y = y;
-    }
+    scope_draw_columns(trace->y, trace->count, x0, trace->min_y, trace->max_y,
+                       ch2 ? 0u : 1u, color);
 }
 
 static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_t gh) {
@@ -6361,7 +6532,7 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
     scope_plot_window_t window = {0};
     if (!slow_roll) window = scope_plot_window();
     uint16_t sample_count = slow_roll ? scope_slow_roll_count :
-        (uint16_t)(width / SCOPE_TRACE_STEP + 1u);
+        (uint16_t)(width + 1u);
     if (!slow_roll && sample_count > SCOPE_TRACE_MAX_POINTS) sample_count = SCOPE_TRACE_MAX_POINTS;
     if (slow_roll && sample_count > SCOPE_SLOW_ROLL_MAX_POINTS) sample_count = SCOPE_SLOW_ROLL_MAX_POINTS;
     // Math uses the first operand's V/div and probe scale, independent of trace positions.
@@ -6382,7 +6553,7 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
             raw0 = scope_slow_roll_raw_at(0, i);
             raw1 = scope_slow_roll_raw_at(1, i);
         } else {
-            x_offset = (uint16_t)(i * SCOPE_TRACE_STEP);
+            x_offset = i;
             raw0 = scope_plot_raw(window, x_offset, 0, width, 1);
             raw1 = scope_plot_raw(window, x_offset, 1, width, 1);
         }
@@ -6404,13 +6575,12 @@ static void ui_draw_math_waveform(uint16_t gx, uint16_t gy, uint16_t gw, uint16_
 
 static void draw_scope_immersive(void) {
     const uint16_t grid_bg = D_PLOT;
-    uint16_t gx = 8;
-    uint16_t gy = 28;
-    uint16_t gw = 304;
-    uint16_t gh = 190;
+    uint16_t gx = PLOT_X, gy = PLOT_Y, gw = PLOT_W, gh = PLOT_H;
 
-    lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
-    ui_draw_status_bar("Oscilloscope", D_SCOPE);
+    if (!roll_partial) {
+        lcd_rect(0, 0, LCD_WIDTH, LCD_HEIGHT, D_BG);
+        ui_draw_status_bar("Oscilloscope", D_SCOPE);
+    }
 
 #if SCOPE_UI_SAFE_STUB
     scope_sanitize_state();
@@ -6461,8 +6631,8 @@ static void draw_scope_immersive(void) {
             } else if (scope_fft_src == 4u) {
                 ui_draw_bode(gx, gy, gw, gh);
             } else {
-                draw_scope_afterglow_trace(0, plot_x0, plot_w, C_CH1);
-                draw_scope_afterglow_trace(1, plot_x0, plot_w, C_CH2);
+                draw_scope_afterglow_trace(0, plot_x0, plot_w, gy + 1, gy + gh - 2, C_CH1);
+                draw_scope_afterglow_trace(1, plot_x0, plot_w, gy + 1, gy + gh - 2, C_CH2);
                 draw_scope_trace(C_CH1, 0, plot_x0, ch1_center, plot_w, gy, gh);
                 draw_scope_trace(C_CH2, 1, plot_x0, ch2_center, plot_w, gy, gh);
             }
@@ -6482,8 +6652,10 @@ static void draw_scope_immersive(void) {
                         scope_hw_ready() ? "Waiting for trigger" : "Starting FPGA", D_MUTED, grid_bg);
     }
 
-    draw_scope_scale_status(220, D_BG);
-    ui_draw_math_menu();
+    if (!roll_partial) {
+        draw_scope_scale_status(220, D_BG);
+        ui_draw_math_menu();
+    }
 }
 
 static uint8_t gen_clamped_duty(void) {
@@ -7218,19 +7390,17 @@ static void ui_draw_modal(const char *icon, uint16_t tone, uint16_t tint,
     }
 }
 
-// Baseline calibration (auto-zero) as a rounded dialog: the channels being
-// zeroed as coloured tags, what to do, and the progress of the 120 steps.
 static void draw_scope_calibration_overlay(void) {
-    enum { STEPS = 120 };
-    uint16_t done;
     int16_t right = MODAL_X + MODAL_W - 14;
 
-    if (!scope_auto_zero_active) {
+    if (!scope_auto_zero_active && !scope_cal.result_ms) {
         return;
     }
-    done = (uint16_t)(STEPS - (scope_auto_zero_steps_left > STEPS ? STEPS : scope_auto_zero_steps_left));
     ui_draw_modal(ICON_SCOPE_MD, D_SCOPE, gfx_blend(D_SCOPE, D_CARD, 4), "Baseline calibration",
-                  "Remove the probes and wait.", 0, (int16_t)(done * 100u / STEPS), 0, 0);
+                  scope_auto_zero_active ? "Ground inputs. MENU cancels." :
+                  scope_cal.failed ? "Not saved. Check input ground." : "Baseline saved.", 0,
+                  scope_auto_zero_active ? (int16_t)(scope_cal.range * 100u / SETTINGS_SCOPE_RANGE_COUNT) : -1,
+                  0, 0);
     if (scope_auto_zero_mask & 0x02u) {
         dmm_draw_pill(right, MODAL_Y + 53, "CH2", gfx_blend(C_CH2, D_CARD, 4), C_CH2, D_CARD, &right);
     }
@@ -7618,6 +7788,31 @@ static void ui_render_dispatch(void *ctx) {
     draw_screenshot_overlay((!ui.chrome_visible && ui.mode == UI_MODE_SCOPE) ? RGB565(4, 8, 11) : C_BG);
 }
 
+static void roll_draw_plot(void *ctx) {
+    (void)ctx;
+    lcd_rect(roll_damage.x0, roll_damage.y0, roll_damage.x1 - roll_damage.x0 + 1,
+             roll_damage.y1 - roll_damage.y0 + 1, D_BG);
+    draw_scope_immersive();
+}
+
+static void roll_draw_damage(void *ctx) {
+    (void)ctx;
+    if (roll_damage.x0 <= roll_damage.x1)
+        lcd_region(roll_damage.x0, roll_damage.y0, roll_damage.x1, roll_damage.y1, roll_draw_plot, 0);
+}
+
+static uint8_t roll_can_reuse_scene(void) {
+    if (SCOPE_UI_SAFE_STUB || ui.mode != UI_MODE_SCOPE || !scope_slow_roll_active() ||
+        !scope_frame_valid || !ui.running || ui.chrome_visible || ui.overlay != UI_OVERLAY_NONE ||
+        ui.softkeys_ms || scope_any_menu_open() || ui_math_menu_visible || scope_fft_src ||
+        scope_math_mode || scope_auto_channel_mask || scope_auto_time_active ||
+        scope_auto_zero_active || scope_cal.result_ms || ui.screenshot_overlay_ms) return 0;
+    fw_update_status_t status;
+    fw_update_status(&status);
+    return status.state == FW_UPDATE_STATE_IDLE ||
+           (status.state == FW_UPDATE_STATE_ERROR && !ui_fw_update_error_ms);
+}
+
 static void ui_render_job(ui_render_job_t job) {
     uint32_t start = load_counter_read();
     current_render_job = job;
@@ -7632,12 +7827,18 @@ static void ui_render_job(ui_render_job_t job) {
             last_full_scene_key = key;
         }
     }
-    lcd_render(ui_render_dispatch, 0);
+    if (job == UI_RENDER_SCOPE_FRAME && roll_can_reuse_scene()) {
+        roll_prepare_damage();
+    } else if (job != UI_RENDER_BATTERY) {
+        roll_painted.valid = 0;
+    }
+    lcd_render(roll_partial ? roll_draw_damage : ui_render_dispatch, 0);
     ui_last_render_ticks = load_counter_elapsed(start, load_counter_read());
-    if (job == UI_RENDER_FULL || job == UI_RENDER_BATTERY ||
-        (!ui.chrome_visible && (job == UI_RENDER_MODE_CONTENT || job == UI_RENDER_SCOPE_FRAME))) {
+    if (!roll_partial && (job == UI_RENDER_FULL || job == UI_RENDER_BATTERY ||
+        (!ui.chrome_visible && (job == UI_RENDER_MODE_CONTENT || job == UI_RENDER_SCOPE_FRAME)))) {
         battery_snapshot_store();
     }
+    roll_partial = 0;
 }
 
 static void ui_render(void) {
@@ -7832,8 +8033,7 @@ void ui_init(void) {
     scope_zero_offset[1] = 0;
     scope_auto_zero_active = 0;
     scope_auto_zero_mask = 0;
-    scope_auto_zero_stable_count = 0;
-    scope_auto_zero_steps_left = 0;
+    scope_cal.result_ms = 0;
     scope_auto_cancel();
     ui.scope_display = SCOPE_DISPLAY_YT;
     ui.scope_cursor_mode = SCOPE_CURSOR_OFF;
@@ -8401,8 +8601,7 @@ static void dmm_step_group(uint8_t group, int8_t dir) {
 
 static void scope_cycle_display(int8_t dir) {
     cycle_u8(&ui.scope_display, SCOPE_DISPLAY_COUNT, dir);
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8778,8 +8977,7 @@ static void scope_adjust_h_pos(int8_t dir) {
     scope_h_value_pos = scope_h_pos;
     scope_h_value_timebase = scope_safe_timebase();
     ui.scope_move_sel = SCOPE_MOVE_SEL_X;
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8796,8 +8994,7 @@ static void scope_reset_move_positions(void) {
     scope_h_value_pos = 0;
     scope_h_value_timebase = scope_safe_timebase();
     ui.scope_move_sel = SCOPE_MOVE_SEL_ZERO;
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8895,8 +9092,7 @@ static void scope_cycle_trigger_source(int8_t dir) {
     (void)dir;
     ui.scope_trigger_source = ui.scope_trigger_source == 2u ? 1u : 2u;
     scope_ch_enabled[scope_trigger_source_index()] = 1u;
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8909,8 +9105,7 @@ static void scope_adjust_trigger_level_steps(int8_t dir, uint8_t step) {
         next = 243;
     }
     ui.scope_trigger_level = (uint8_t)next;
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8924,15 +9119,13 @@ static void scope_adjust_trigger_level_key(int8_t dir, uint8_t repeat) {
 
 static void scope_cycle_trigger_mode(int8_t dir) {
     cycle_u8(&ui.scope_trigger_mode, SCOPE_TRIGGER_COUNT, dir);
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
 static void scope_toggle_trigger_edge(void) {
     ui.scope_trigger_edge ^= 1u;
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_trace_invalidate();
 }
 
@@ -8993,93 +9186,124 @@ static uint8_t scope_auto_zero_long_mask(void) {
     return 0x03u;
 }
 
-static void scope_apply_zero_offsets_only(void) {
-#if !SCOPE_UI_SAFE_STUB
-    scope_hw_set_offsets(scope_bias_dac_for_channel(0), scope_bias_dac_for_channel(1));
-#endif
-}
+enum { SCOPE_CAL_TIMEBASE = 10, SCOPE_CAL_RADIUS = 192 };
 
-static uint8_t scope_auto_zero_channel_step(uint8_t idx) {
-    uint8_t range = scope_channel_range_index(idx);
-    int16_t delta = (int16_t)scope_avg_raw[idx] - 128;
-    uint16_t bias = ui_settings.scope_bias[idx][range];
-    uint8_t mag = (uint8_t)(delta < 0 ? -delta : delta);
-    uint8_t step;
-
-    if (mag <= 2u) {
-        return 0;
+static void scope_cal_start_range(void) {
+    uint8_t range[2];
+    uint16_t dac[2];
+    scope_cal.done = (uint8_t)(3u ^ scope_auto_zero_mask);
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        range[ch] = (scope_auto_zero_mask & (1u << ch)) ? scope_cal.range : scope_channel_range_index(ch);
+        int bias = scope_cal.bias[ch][range[ch]];
+        dac[ch] = (uint16_t)bias;
+        scope_cal.search[ch].lo = bias > SCOPE_CAL_RADIUS ? bias - SCOPE_CAL_RADIUS : 0;
+        scope_cal.search[ch].hi = bias < 4095 - SCOPE_CAL_RADIUS ? bias + SCOPE_CAL_RADIUS : 4095;
+        scope_cal.search[ch].best = dac[ch];
+        scope_cal.search[ch].error = UINT16_MAX;
     }
-    step = mag >= 40u ? 4u : (mag >= 20u ? 2u : 1u);
-    if (delta > 0) {
-        bias = bias > step ? (uint16_t)(bias - step) : 0u;
-    } else {
-        bias = bias + step > 4095u ? 4095u : (uint16_t)(bias + step);
-    }
-    if (bias == ui_settings.scope_bias[idx][range]) {
-        return 0;
-    }
-    ui_settings.scope_bias[idx][range] = bias;
-    return 1;
+    scope_hw_configure_channels(SCOPE_CAL_TIMEBASE, range[0], range[1], 1, 1, dac[0], dac[1]);
+    scope_cal.delay_ms = 100;
+    scope_cal.arm = 1;
+    scope_cal.age_ms = 0;
 }
 
 static void scope_auto_zero_begin(uint8_t mask) {
-    if (!scope_hw_enabled()) {
-        return;
-    }
-    mask &= 0x03u;
-    if (!mask) {
-        mask = 0x03u;
-    }
-    if (mask & 0x01u) {
-        scope_zero_offset[0] = 0;
-        scope_ch_enabled[0] = 1;
-    }
-    if (mask & 0x02u) {
-        scope_zero_offset[1] = 0;
-        scope_ch_enabled[1] = 1;
-    }
-    scope_auto_zero_mask = mask;
-    scope_auto_zero_stable_count = 0;
-    scope_auto_zero_active = 1;
-    scope_auto_zero_steps_left = 120;
+    if (SCOPE_UI_SAFE_STUB || !scope_hw_enabled() || scope_auto_zero_active) return;
     scope_auto_cancel();
-    scope_trigger_offset = 0;
-    scope_trigger_locked = 0;
-    ui.running = 1;
+    scope_hw_slow_stop();
     scope_clear_menus();
     ui.scope_move_menu_ms = 0;
     ui.chrome_visible = 0;
-    scope_apply_zero_offsets_only();
-    scope_hw_arm();
+    scope_cal.range = 0;
+    scope_cal.result_ms = 0;
+    scope_auto_zero_mask = (mask & 3u) ? (mask & 3u) : 3u;
+    scope_auto_zero_active = 1;
+    for (unsigned ch = 0; ch < 2; ++ch)
+        for (unsigned r = 0; r < SETTINGS_SCOPE_RANGE_COUNT; ++r)
+            scope_cal.bias[ch][r] = ui_settings.scope_bias[ch][r];
+    scope_cal_start_range();
 }
 
-static void scope_auto_zero_service(void) {
-    uint8_t changed;
-
-    if (!scope_auto_zero_active || !scope_frame_valid) {
-        return;
-    }
-    changed = 0;
-    if (scope_auto_zero_mask & 0x01u) {
-        changed = (uint8_t)(changed | scope_auto_zero_channel_step(0));
-    }
-    if (scope_auto_zero_mask & 0x02u) {
-        changed = (uint8_t)(changed | scope_auto_zero_channel_step(1));
-    }
-    if (scope_auto_zero_steps_left) {
-        --scope_auto_zero_steps_left;
-    }
-    if (changed) {
-        scope_auto_zero_stable_count = 0;
+static void scope_cal_finish(uint8_t ok) {
+    if (ok) {
+        for (unsigned ch = 0; ch < 2; ++ch)
+            if (scope_auto_zero_mask & (1u << ch))
+                for (unsigned r = 0; r < SETTINGS_SCOPE_RANGE_COUNT; ++r)
+                    ui_settings.scope_bias[ch][r] = scope_cal.bias[ch][r];
         settings_note(&ui_settings);
-        scope_apply_zero_offsets_only();
-    } else if (scope_auto_zero_stable_count < 30u) {
-        ++scope_auto_zero_stable_count;
+        settings_flush();
     }
-    if (scope_auto_zero_stable_count >= 12u || !scope_auto_zero_steps_left) {
-        scope_auto_zero_active = 0;
-        scope_auto_zero_mask = 0;
+    scope_cal.failed = !ok;
+    scope_cal.result_ms = 1800;
+    scope_apply_settings_keep_frame(!ui.running && scope_frame_valid);
+}
+
+// Return -1 for a noisy/unreachable zero, 0 to try another DAC code, 1 when done.
+static int scope_cal_measure(unsigned ch) {
+    uint32_t sum = 0;
+    uint8_t low = 255, high = 0;
+    enum { N = SCOPE_SAMPLE_COUNT - 4 };
+    for (unsigned i = 2; i < SCOPE_SAMPLE_COUNT - 2; ++i) {
+        uint8_t s = scope_capture_samples[2*i + ch];
+        sum += s;
+        if (s < low) low = s;
+        if (s > high) high = s;
     }
+    if (high - low > 24) return -1;
+    int32_t err = (int32_t)((sum * 256u + N/2) / N) - 128*256;
+    uint16_t mag = (uint16_t)(err < 0 ? -err : err);
+    uint16_t *bias = &scope_cal.bias[ch][scope_cal.range];
+    if (mag < scope_cal.search[ch].error) {
+        scope_cal.search[ch].error = mag;
+        scope_cal.search[ch].best = *bias;
+    }
+    if (err > 0) scope_cal.search[ch].hi = (int16_t)*bias - 1;
+    else scope_cal.search[ch].lo = (int16_t)*bias + 1;
+    if (mag <= 32u || scope_cal.search[ch].lo > scope_cal.search[ch].hi) {
+        *bias = scope_cal.search[ch].best;
+        return scope_cal.search[ch].error <= 256u ? 1 : -1;
+    }
+    *bias = (uint16_t)((scope_cal.search[ch].lo + scope_cal.search[ch].hi) / 2);
+    return 0;
+}
+
+static uint8_t scope_auto_zero_tick(uint32_t elapsed_ms) {
+    if (elapsed_ms >= (uint32_t)(4000 - scope_cal.age_ms)) {
+        scope_cal_finish(0);
+        return 1;
+    }
+    scope_cal.age_ms += (uint16_t)elapsed_ms;
+    if (elapsed_ms < scope_cal.delay_ms) {
+        scope_cal.delay_ms -= (uint16_t)elapsed_ms;
+        return 0;
+    }
+    // Start a fresh acquisition after the relays and new DAC code have settled.
+    scope_cal.delay_ms = 10;
+    if (scope_cal.arm) {
+        scope_cal.arm = 0;
+        scope_hw_arm();
+        return 0;
+    }
+    if (!scope_hw_read_capture(scope_capture_samples, SCOPE_SAMPLE_BYTES, SCOPE_CAL_TIMEBASE)) return 0;
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        if (scope_cal.done & (1u << ch)) continue;
+        int result = scope_cal_measure(ch);
+        if (result < 0) { scope_cal_finish(0); return 1; }
+        if (result > 0) scope_cal.done |= (uint8_t)(1u << ch);
+    }
+    if (scope_cal.done == 3) {
+        if (++scope_cal.range == SETTINGS_SCOPE_RANGE_COUNT) scope_cal_finish(1);
+        else scope_cal_start_range();
+        return 1;
+    }
+    uint16_t dac[2];
+    for (unsigned ch = 0; ch < 2; ++ch)
+        dac[ch] = scope_cal.bias[ch][scope_auto_zero_mask & (1u << ch) ?
+                                    scope_cal.range : scope_channel_range_index(ch)];
+    scope_hw_set_offsets(dac[0], dac[1]);
+    scope_cal.arm = 1;
+    scope_cal.delay_ms = 20;
+    return 0;
 }
 
 static void scope_auto_cancel(void) {
@@ -9232,8 +9456,7 @@ static uint8_t scope_auto_time_finish(uint8_t final_slow_step) {
         scope_h_value_pos = 0;
         scope_h_value_timebase = scope_safe_timebase();
         scope_cursor_time_sync_screen();
-        scope_trigger_locked = 0;
-        scope_roll_trigger_reset();
+        scope_trigger_reset();
         scope_apply_settings();
         scope_hw_arm();
     }
@@ -9293,8 +9516,7 @@ static uint8_t scope_auto_time_service(void) {
         scope_h_value_pos = 0;
         scope_h_value_timebase = scope_safe_timebase();
         scope_cursor_time_sync_screen();
-        scope_trigger_locked = 0;
-        scope_roll_trigger_reset();
+        scope_trigger_reset();
         scope_apply_settings();
         scope_hw_arm();
         return 1;
@@ -9343,8 +9565,7 @@ static void scope_auto_setup_request(uint8_t mask) {
     scope_h_value_pos = 0;
     scope_h_value_timebase = scope_safe_timebase();
     scope_cursor_time_sync_screen();
-    scope_trigger_locked = 0;
-    scope_roll_trigger_reset();
+    scope_trigger_reset();
     scope_apply_settings();
     scope_hw_arm();
 }
@@ -10400,6 +10621,14 @@ void ui_handle_keys(uint32_t events) {
     ui.sleep_due = 0;
 
     if (events == 0) return;
+    if (scope_auto_zero_active && ui.mode == UI_MODE_SCOPE) {
+        if (events & KEY_MENU) {
+            scope_cal_finish(0);
+            scope_cal.result_ms = 0;
+            ui_render();
+        }
+        return;
+    }
 
     if (ui.overlay == UI_OVERLAY_SETTINGS && ui.boot_export_state == BOOT_EXPORT_UI_CONFIRM) {
         ui_handle_menu_keys(events);
@@ -10496,10 +10725,6 @@ void ui_handle_keys(uint32_t events) {
     if ((events & KEY_AUTO_LONG) && ui.mode == UI_MODE_SCOPE) {
         scope_auto_zero_begin(scope_auto_zero_long_mask());
         ui_render();
-        return;
-    }
-
-    if (scope_auto_zero_active && ui.mode == UI_MODE_SCOPE) {
         return;
     }
 
@@ -10848,10 +11073,10 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
     meta[mpos++] = ',';
 
     char num_buf[16];
-    uint32_t f1 = scope_ch_enabled[0] ? scope_filtered_freq_hz(0) : 0;
+    uint32_t f1 = scope_frame_valid && scope_ch_enabled[0] ? scope_filtered_freq_hz(0) : 0;
     uint8_t min0 = scope_filtered_min_raw(0);
     uint8_t max0 = scope_filtered_max_raw(0);
-    uint32_t vpp1 = (scope_ch_enabled[0] && max0 >= min0) ?
+    uint32_t vpp1 = (scope_frame_valid && scope_ch_enabled[0] && max0 >= min0) ?
                     (uint32_t)scope_raw_span_mv(0, (uint8_t)(max0 - min0)) : 0;
 
     scope_format_u32(num_buf, f1);
@@ -10864,10 +11089,10 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
     while (*p) meta[mpos++] = *p++;
     meta[mpos++] = ',';
 
-    uint32_t f2 = scope_ch_enabled[1] ? scope_filtered_freq_hz(1) : 0;
+    uint32_t f2 = scope_frame_valid && scope_ch_enabled[1] ? scope_filtered_freq_hz(1) : 0;
     uint8_t min1 = scope_filtered_min_raw(1);
     uint8_t max1 = scope_filtered_max_raw(1);
-    uint32_t vpp2 = (scope_ch_enabled[1] && max1 >= min1) ?
+    uint32_t vpp2 = (scope_frame_valid && scope_ch_enabled[1] && max1 >= min1) ?
                     (uint32_t)scope_raw_span_mv(1, (uint8_t)(max1 - min1)) : 0;
 
     scope_format_u32(num_buf, f2);
@@ -10889,6 +11114,7 @@ static void scope_stream_telemetry(uint32_t elapsed_ms) {
     meta[mpos++] = '\n';
 
     usb_cdc_send_bytes((const uint8_t *)meta, mpos);
+    if (!scope_frame_valid) return;
 
     // 2. Waveforms
     static const char hex_digits[] = "0123456789ABCDEF";
@@ -11088,6 +11314,16 @@ void ui_tick(uint32_t elapsed_ms) {
         }
     }
 
+    if (scope_cal.result_ms) {
+        if (elapsed_ms >= scope_cal.result_ms) {
+            scope_cal.result_ms = 0;
+            if (ui.mode == UI_MODE_SCOPE) { ui_render(); rendered = 1; }
+        } else scope_cal.result_ms -= (uint16_t)elapsed_ms;
+    }
+    if (scope_auto_zero_active && ui.mode == UI_MODE_SCOPE) {
+        if (scope_auto_zero_tick(elapsed_ms)) ui_render();
+        return;
+    }
     if (SCOPE_UI_SAFE_STUB && ui.mode == UI_MODE_SCOPE && ui.running) {
         uint32_t scope_next = (uint32_t)ui.scope_ms + elapsed_ms;
         if (scope_next >= SCOPE_STUB_FRAME_MS) {
@@ -11108,7 +11344,8 @@ void ui_tick(uint32_t elapsed_ms) {
         if (scope_next >= frame_ms) {
             ui.scope_ms = (uint16_t)(scope_next - frame_ms);
             ui.scope_phase = (uint16_t)(ui.scope_phase + 7u + scope_safe_timebase() * 3u);
-            if (scope_poll_frame()) {
+            uint8_t arm_after_render;
+            if (scope_poll_frame(&arm_after_render)) {
                 uint16_t interval = (uint16_t)((scope_frame_age_ms + 5u) / 10u);
                 scope_frame_interval_x10ms = interval > 999u ? 999u : interval;
                 scope_frame_age_ms = 0;
@@ -11119,6 +11356,7 @@ void ui_tick(uint32_t elapsed_ms) {
                 } else if (!rendered) {
                     ui_render_scope_frame();
                 }
+                if (arm_after_render) scope_hw_arm();
             }
         } else {
             ui.scope_ms = (uint16_t)scope_next;
@@ -11126,6 +11364,7 @@ void ui_tick(uint32_t elapsed_ms) {
     } else {
         ui.scope_ms = 0;
         scope_frame_age_ms = 0;
+        scope_auto_sweep = SWEEP_IDLE;
     }
 
         if (ui.mode == UI_MODE_SCOPE) {
@@ -11163,6 +11402,10 @@ void ui_set_dmm_mode(uint8_t mode) {
 void ui_set_main_mode(uint8_t mode) {
     if (mode >= 3u) mode = 0;
     if (ui.mode != mode) {
+        if (scope_auto_zero_active) {
+            scope_cal_finish(0);
+            scope_cal.result_ms = 0;
+        }
         ui_direct_mode(mode);
         // Every key-driven shortcut repaints right here (KEY_MOVE_LONG and
         // its neighbours). This one did not, so a mode change asked for
@@ -11180,7 +11423,7 @@ void ui_scope_set_running(uint8_t run) {
 }
 
 void ui_scope_trigger_auto(void) {
-    if (ui.mode == UI_MODE_SCOPE) {
+    if (ui.mode == UI_MODE_SCOPE && !scope_auto_zero_active) {
         uint8_t mask = (uint8_t)((scope_ch_enabled[0] ? 0x01u : 0u) |
                                  (scope_ch_enabled[1] ? 0x02u : 0u));
         if (!mask) {
@@ -11191,7 +11434,7 @@ void ui_scope_trigger_auto(void) {
 }
 
 void ui_scope_step_timebase(int8_t dir) {
-    if (ui.mode == UI_MODE_SCOPE) {
+    if (ui.mode == UI_MODE_SCOPE && !scope_auto_zero_active) {
         scope_step_timebase(dir);
         ui_render_mode_content();
     }
@@ -11209,7 +11452,7 @@ void ui_inject_keys(uint32_t events) {
 }
 
 void ui_scope_step_vdiv(uint8_t ch, int8_t dir) {
-    if (ui.mode == UI_MODE_SCOPE && ch < 2u) {
+    if (ui.mode == UI_MODE_SCOPE && !scope_auto_zero_active && ch < 2u) {
         cycle_u8(&scope_vdiv_ch[ch], SCOPE_VDIV_COUNT, dir);
         scope_auto_cancel();
         ui.scope_vdiv = scope_safe_vdiv();

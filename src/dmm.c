@@ -1,6 +1,7 @@
 #include "dmm.h"
 
 #include "board.h"
+#include "clock_tree.h"
 #include "hw.h"
 
 #include <stdint.h>
@@ -99,33 +100,6 @@ void dmm_hw4_set_mode_gate(uint8_t active) {
 #endif
 }
 
-static uint32_t rcc_sysclk_hz(void) {
-    static const uint8_t ahb_shift[] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 6, 7, 8, 9,
-    };
-    static const uint8_t apb_shift[] = {0, 0, 0, 0, 1, 2, 3, 4};
-    uint32_t cfgr = RCC_CFGR;
-    uint32_t sysclk = 8000000u;
-    uint32_t sws = (cfgr >> 2) & 3u;
-
-    if (sws == 2u) {
-        uint32_t mult_bits = (cfgr >> 18) & 0x0Fu;
-        uint32_t ext_bits = (cfgr >> 29) & 0x03u;
-        uint32_t mult = (ext_bits || mult_bits == 15u) ? (mult_bits + 16u * ext_bits + 1u) : (mult_bits + 2u);
-        uint32_t base = 4000000u;
-        if (cfgr & (1u << 16)) {
-            base = 8000000u;
-        }
-        sysclk = base * mult;
-    } else if (sws == 1u) {
-        sysclk = 8000000u;
-    }
-
-    sysclk >>= ahb_shift[(cfgr >> 4) & 0x0Fu];
-    sysclk >>= apb_shift[(cfgr >> 8) & 0x07u];
-    return sysclk;
-}
-
 static uint16_t dmm_brr_for_pclk(uint32_t pclk) {
     uint32_t brr = (pclk + (DMM_UART_BAUD / 2u)) / DMM_UART_BAUD;
     if (!brr || brr > 60000u) {
@@ -135,7 +109,7 @@ static uint16_t dmm_brr_for_pclk(uint32_t pclk) {
 }
 
 static uint16_t dmm_compute_brr(void) {
-    return dmm_brr_for_pclk(rcc_sysclk_hz());
+    return dmm_brr_for_pclk(clock_apb1_hz(RCC_CFGR, RCC_CFGR2, RCC_MISC3));
 }
 
 static uint16_t dmm_current_brr(void) {

@@ -11,6 +11,8 @@ typedef void (*lcd_render_fn_t)(void *ctx);
 void lcd_init(void);
 void lcd_display_on(void);
 void lcd_render(lcd_render_fn_t render, void *ctx);
+// Inside a render pass: recompose and transfer only this inclusive rectangle.
+void lcd_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, lcd_render_fn_t draw, void *ctx);
 void lcd_fill(uint16_t color);
 void lcd_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
 void lcd_frame(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);

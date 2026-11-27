@@ -43,7 +43,7 @@ static void test_sine_seam(void) {
     assert(scope_trigger_crossed(scope_capture_samples[100u],
                                  scope_capture_samples[102u]));
     assert(scope_find_trigger_offset(scope_capture_samples, &offset));
-    assert(offset == 151u);
+    assert(offset == (HW_TARGET_HW40 ? 151u : 181u));
     scope_trigger_locked = 1;
     scope_trigger_offset = offset;
     assert(scope_capture_window_start() == offset);
@@ -53,8 +53,10 @@ static void test_sine_seam(void) {
         float values[FFT_SIZE];
         float mean = 0.0f;
         uint16_t visible = scope_visible_sample_count();
-        for (uint16_t i = 0; i < FFT_SIZE; ++i) {
-            float position = (float)i * (float)(visible - 1u) / (float)(FFT_SIZE - 1u);
+        uint16_t used = visible < FFT_SIZE ? visible : FFT_SIZE;
+        for (uint16_t i = 0; i < used; ++i) {
+            float position = visible <= FFT_SIZE ? (float)i :
+                (float)i * (float)(visible - 1u) / (float)(FFT_SIZE - 1u);
             uint16_t low = (uint16_t)position;
             uint16_t high = low < visible - 1u ? (uint16_t)(low + 1u) : low;
             float a = (float)scope_raw_delta_mv(ch, scope_samples[(offset + low) * 2u + ch]);
@@ -62,12 +64,13 @@ static void test_sine_seam(void) {
             values[i] = a + (b - a) * (position - (float)low);
             mean += values[i];
         }
-        mean /= (float)FFT_SIZE;
+        mean /= (float)used;
         float actual[FFT_SIZE];
-        bode_extract_channel(ch, actual);
-        for (uint16_t i = 0; i < FFT_SIZE; ++i) {
+        assert(bode_extract_channel(ch, actual) == used);
+        for (uint16_t i = 0; i < used; ++i) {
             assert(fabsf(actual[i] - (values[i] - mean)) < 0.001f);
         }
+        for (uint16_t i = used; i < FFT_SIZE; ++i) assert(actual[i] == 0.0f);
         for (uint16_t x = 0; x <= visible - 1u; ++x) {
             uint8_t raw = scope_samples[(offset + x) * 2u + ch];
             int16_t expected = scope_scaled_sample_y(ch, raw, 0, 30, -10000, 10000);
@@ -84,12 +87,47 @@ static void test_incomplete_trigger_windows(void) {
     uint16_t offset = 123u;
     assert(!scope_find_trigger_offset(scope_capture_samples, &offset));
     assert(offset == 123u);
-    assert(scope_trigger_accepts_capture(0));
-    assert(scope_capture_window_start() == 874u);
+    scope_auto_sweep_arm(0);
+    assert(!scope_trigger_accepts_capture(0, 0));
+    assert(scope_trigger_accepts_capture(0, SCOPE_AUTO_SWEEP_CYCLES));
+    assert(scope_capture_window_start() == (HW_TARGET_HW40 ? 874u : 904u));
     ui.scope_trigger_mode = SCOPE_TRIGGER_NORMAL;
-    assert(!scope_trigger_accepts_capture(0));
+    assert(!scope_trigger_accepts_capture(0, UINT32_MAX));
     ui.scope_trigger_mode = SCOPE_TRIGGER_SINGLE;
-    assert(!scope_trigger_accepts_capture(0));
+    assert(!scope_trigger_accepts_capture(0, UINT32_MAX));
+}
+
+static void test_auto_sweep(void) {
+    setup();
+    ui.scope_timebase = 0;
+    uint32_t t = UINT32_MAX - SCOPE_AUTO_SWEEP_CYCLES / 2u;
+    scope_auto_sweep_arm(t);
+    assert(!scope_trigger_accepts_capture(0, t));
+    assert(scope_frame_interval_ms() == 20u);
+    t += SCOPE_AUTO_SWEEP_CYCLES - 1u; // Cross the cycle-counter wrap.
+    assert(scope_trigger_accepts_capture(1, t));
+    assert(scope_frame_interval_ms() == scope_normal_frame_interval_ms());
+    assert(!scope_trigger_accepts_capture(0, t + SCOPE_AUTO_SWEEP_CYCLES - 1u));
+    t += SCOPE_AUTO_SWEEP_CYCLES;
+    assert(scope_trigger_accepts_capture(0, t));
+    assert(scope_trigger_accepts_capture(0, t + 1u));
+    assert(scope_trigger_accepts_capture(1, t + 2u)); // Reacquire without delay.
+    assert(!scope_trigger_accepts_capture(0, t + 3u));
+    scope_trigger_reset();
+    assert(scope_auto_sweep == SWEEP_IDLE);
+    for (uint8_t mode = SCOPE_TRIGGER_NORMAL; mode <= SCOPE_TRIGGER_SINGLE; ++mode) {
+        ui.scope_trigger_mode = mode;
+        assert(!scope_trigger_accepts_capture(0, t));
+        assert(scope_trigger_accepts_capture(1, t));
+        assert(scope_auto_sweep == SWEEP_IDLE);
+    }
+    ui.scope_trigger_mode = SCOPE_TRIGGER_AUTO;
+    scope_auto_sweep_arm(t);
+    scope_auto_time_active = 1;
+    assert(scope_trigger_accepts_capture(0, t)); // Autoset needs untriggered data.
+    scope_auto_time_active = 0;
+    ui.scope_timebase = SCOPE_SLOW_ROLL_TIMEBASE_START;
+    assert(scope_trigger_accepts_capture(0, t));
 }
 
 static void test_window_bounds(void) {
@@ -133,11 +171,11 @@ int main(void) {
     setup();
     ui.scope_timebase = 0;
     scope_plot_window_t w = scope_plot_window();
-    assert(w.count == 30 && w.zoom);
+    assert(w.count == (HW_TARGET_HW40 ? 30u : 24u) && w.zoom);
     scope_samples[2u * w.start] = 40;
     scope_samples[2u * (w.start + 1u)] = 200;
-    assert(scope_plot_raw(w, 5, 0, 300, 1) == 120);
-    assert(scope_plot_raw(w, 10, 0, 300, 1) == 200);
+    assert(scope_plot_raw(w, 5, 0, w.count * 10u, 1) == 120);
+    assert(scope_plot_raw(w, 10, 0, w.count * 10u, 1) == 200);
     assert(scope_display_sample_raw(5, 0, 300) == 40);
     w.start = SCOPE_SAMPLE_COUNT - w.count;
     scope_samples[2u * (SCOPE_SAMPLE_COUNT - 1u)] = 37;
@@ -147,6 +185,7 @@ int main(void) {
     assert(scope_mv_to_pixels(4000, 1000, 190) == 95);
     test_sine_seam();
     test_incomplete_trigger_windows();
+    test_auto_sweep();
     test_window_bounds();
     puts("scope window regression tests passed");
     return 0;

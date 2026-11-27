@@ -7,6 +7,8 @@
 #include <string.h>
 
 static unsigned math_lines;
+static unsigned clipped_lines;
+static int16_t clipped[4];
 static int16_t math_first_y;
 static int16_t math_last_y;
 static unsigned arm_count;
@@ -15,16 +17,21 @@ static uint8_t configured_timebase;
 static uint8_t configured_range[2];
 static uint8_t configured_coupling[2];
 static uint8_t capture_ready;
+static unsigned flush_count;
+static uint32_t test_cycles;
+static const uint8_t *capture_input;
+uint32_t board_cycle_counter_read(void) { return test_cycles; }
 
 void scope_hw_arm(void) { ++arm_count; }
 void scope_hw_set_offsets(uint16_t dac0, uint16_t dac1) { (void)dac0; (void)dac1; }
 void settings_note(const settings_state_t *settings) { (void)settings; }
+void settings_flush(void) { ++flush_count; }
 uint8_t scope_hw_enabled(void) { return 1; }
-uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
+uint8_t scope_hw_read_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
     (void)timebase;
     assert(len == SCOPE_SAMPLE_BYTES);
     if (!capture_ready) return 0;
-    memcpy(dst, scope_samples, len);
+    memcpy(dst, capture_input ? capture_input : scope_samples, len);
     return 1;
 }
 uint8_t scope_hw_capture_point(uint8_t sample[2], uint8_t timebase) {
@@ -64,6 +71,10 @@ void lcd_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
     (void)x; (void)y; (void)w; (void)h; (void)color;
 }
 void lcd_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
+    if (color == 0xabcd) {
+        ++clipped_lines;
+        clipped[0] = x0; clipped[1] = y0; clipped[2] = x1; clipped[3] = y1;
+    }
     (void)x0; (void)x1;
     if (color == RGB565(255, 0, 255)) {
         if (!math_lines) math_first_y = y0;
@@ -107,6 +118,9 @@ static void setup(void) {
     }
     math_lines = arm_count = configure_count = 0;
     capture_ready = 0;
+    capture_input = NULL;
+    test_cycles = 0;
+    scope_auto_sweep = SWEEP_IDLE;
 }
 
 static void fill_square(uint16_t period, uint16_t high_samples, uint8_t low, uint8_t high) {
@@ -123,30 +137,33 @@ static void test_hardware_timing(void) {
         assert(scope_slow_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 18)));
         assert(scope_soft_roll_active() == (!HW_TARGET_HW40 && tb == 18));
         assert(scope_irq_roll_active() == (tb >= (HW_TARGET_HW40 ? 21 : 19)));
-        uint32_t span = 52428800u / scope_timebase_unit_ns[tb];
+        uint32_t tick = HW_TARGET_HW40 ? 20u : 25u;
+        uint8_t dense = !HW_TARGET_HW40 && tb >= 15u && tb <= 17u;
+        uint32_t span = (dense ? 209715200u : 52428800u) / scope_timebase_unit_ns[tb];
         if (span > 0x100000u) span = 0x100000u;
         uint32_t expected = scope_slow_roll_active() ?
             (scope_timebase_unit_ns[tb] * 2u + 2u) / 5u :
-            (20u * 0x100000u + span / 2u) / span;
+            (tick * 0x100000u + span / 2u) / span;
         assert(scope_sample_period_ns() == expected);
         uint64_t screen_ns = (uint64_t)scope_timebase_unit_ns[tb] * 120u;
         uint64_t visible = (screen_ns + expected / 2u) / expected;
         if (visible < 2u) visible = 2u;
-        if (visible > 300u) visible = 300u;
+        if (!dense && visible > 300u) visible = 300u;
+        if (dense) assert(visible > 940u && visible < 980u);
         assert(scope_visible_sample_count() == visible);
         if (scope_slow_roll_active()) assert(scope_visible_sample_count() == 300u);
     }
     ui.scope_timebase = 0;
-    assert(scope_sample_period_ns() == 20u);
-    assert(scope_visible_sample_count() == 30u);
+    assert(scope_sample_period_ns() == (HW_TARGET_HW40 ? 20u : 25u));
+    assert(scope_visible_sample_count() == (HW_TARGET_HW40 ? 30u : 24u));
     ui.scope_timebase = 4;
-    assert(scope_sample_period_ns() == 40u);
-    assert(scope_visible_sample_count() == 300u);
+    assert(scope_sample_period_ns() == (HW_TARGET_HW40 ? 40u : 50u));
+    assert(scope_visible_sample_count() == (HW_TARGET_HW40 ? 300u : 240u));
     ui.scope_timebase = 5;
-    assert(scope_sample_period_ns() == 80u);
+    assert(scope_sample_period_ns() == (HW_TARGET_HW40 ? 80u : 100u));
     ui.scope_timebase = 17;
-    assert(scope_sample_period_ns() == 806597u);
-    assert(scope_visible_sample_count() == 298u);
+    assert(scope_sample_period_ns() == (HW_TARGET_HW40 ? 806597u : 252062u));
+    assert(scope_visible_sample_count() == (HW_TARGET_HW40 ? 298u : 952u));
 #if HW_TARGET_HW40
     // Truncated spans 10, 5 and 2 stretch the HW4 50MS, 100MS and 200MS captures.
     ui.scope_timebase = 18;
@@ -165,18 +182,19 @@ static void test_frequency(void) {
     setup();
     ui.scope_timebase = 3;
     fill_square(2, 1, 96, 160);
-    assert(scope_estimate_freq_hz_window(0, 0, SCOPE_SAMPLE_COUNT, 96, 160) == 25000000u);
+    assert(scope_estimate_freq_hz_window(0, 0, SCOPE_SAMPLE_COUNT, 96, 160) == (HW_TARGET_HW40 ? 25000000u : 20000000u));
     fill_square(5, 2, 96, 160);
-    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == 10000000u);
+    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == (HW_TARGET_HW40 ? 10000000u : 8000000u));
     assert(scope_estimate_freq_hz_window(0, 0, 2, 96, 160) == 0);
     for (uint8_t tb = 4; tb < SCOPE_TIMEBASE_COUNT; ++tb) {
         ui.scope_timebase = tb;
         fill_square(25, 12, 96, 160);
-        uint32_t expected = (uint32_t)(1000000000ull / (25ull * scope_sample_period_ns()));
+        uint64_t period = 25ull * scope_sample_period_ns();
+        uint32_t expected = (uint32_t)((1000000000ull + period / 2u) / period);
         assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == expected);
     }
     ui.scope_timebase = 19;
-    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == (HW_TARGET_HW40 ? 9u : 10u));
+    assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == 10u);
 #if HW_TARGET_HW40
     // A 1 Hz square wave at 200MS spans five divisions of real time.
     ui.scope_timebase = 20;
@@ -184,6 +202,17 @@ static void test_frequency(void) {
     assert(scope_estimate_freq_hz_window(0, 2, 2046, 96, 160) == 1u);
     assert(scope_visible_sample_count() * 5u / 12u == 95u);
 #endif
+    ui.scope_timebase = 15;
+    // CH2 rings at the midpoint on the way down; CH1 and the real period are unchanged.
+    for (unsigned i = 0; i < SCOPE_SAMPLE_COUNT; ++i) {
+        unsigned phase = i % 92u;
+        scope_samples[2*i] = phase < 46 ? 184 : 128;
+        scope_samples[2*i+1] = phase >= 40 && phase < 52 ?
+                              (phase & 1u ? 158 : 154) : scope_samples[2*i];
+    }
+    uint32_t expected = (uint32_t)(1e9 / (92.0 * scope_sample_period_ns()) + 0.5);
+    for (uint8_t ch = 0; ch < 2; ++ch)
+        assert(scope_estimate_freq_hz_window(ch, 2, 2046, 128, 184) == expected);
 }
 
 static void test_mean(void) {
@@ -194,6 +223,12 @@ static void test_mean(void) {
     char value[12];
     scope_measure_value_for(value, 0, SCOPE_MEASURE_VAVG);
     assert(strcmp(value, "0.602V") == 0);
+    fill_square(256, 64, 128, 255);
+    scope_compute_stats();
+    scope_measure_value_for(value, 0, SCOPE_MEASURE_VAVG);
+    assert(strcmp(value, "CLIP") == 0);
+    scope_measure_value_for(value, 0, SCOPE_MEASURE_VMIN);
+    assert(strcmp(value, "CLIP") != 0);
     for (uint8_t ch = 0; ch < 2; ++ch) {
         for (uint8_t range = 0; range < SCOPE_VDIV_COUNT; ++range) {
             scope_vdiv_ch[ch] = range;
@@ -516,6 +551,54 @@ static void test_auto_clipped(void) {
     assert(ui.scope_timebase == SCOPE_AUTO_TIMEBASE_MAX);
 }
 
+static uint8_t test_poll_frame(void) {
+    uint8_t later;
+    uint8_t got = scope_poll_frame(&later);
+    if (later) scope_hw_arm();
+    return got;
+}
+
+static void test_auto_sweep_keeps_real_frame(void) {
+    static uint8_t raw[SCOPE_SAMPLE_BYTES];
+    setup();
+    ui.scope_timebase = 0;
+    capture_input = raw;
+    memset(raw, 150, sizeof(raw));
+    memset(raw, 100, 600);
+    capture_ready = 1;
+    assert(test_poll_frame() && scope_trigger_locked);
+    uint16_t id = scope_frame_id;
+    uint16_t offset = scope_trigger_offset;
+    memset(raw, 128, sizeof(raw));
+    test_cycles = SCOPE_AUTO_SWEEP_CYCLES - 1u;
+    assert(!test_poll_frame() && arm_count == 2);
+    assert(scope_frame_id == id && scope_trigger_locked && scope_trigger_offset == offset);
+    assert(scope_samples[598] == 100 && scope_samples[600] == 150);
+    ++test_cycles;
+    assert(test_poll_frame() && !scope_trigger_locked && scope_frame_id == id + 1u);
+    assert(scope_samples[600] == 128);
+    memset(raw, 132, sizeof(raw)); // Free-run shows changing DC, not a synthetic zero.
+    assert(test_poll_frame() && !scope_trigger_locked && scope_samples[600] == 132);
+    memset(raw, 100, 600);
+    assert(test_poll_frame() && scope_trigger_locked);
+    capture_input = NULL;
+}
+
+static void test_capture_ownership(void) {
+    setup();
+    ui.scope_timebase = 15;
+    ui.scope_trigger_mode = SCOPE_TRIGGER_NORMAL;
+    uint8_t later = 1;
+    assert(!scope_poll_frame(&later) && !later && !arm_count);
+    capture_ready = 1;
+    auto_fill_channel(0, 2, 128, 128);
+    assert(!scope_poll_frame(&later) && !later && arm_count == 1);
+    ui.scope_trigger_mode = SCOPE_TRIGGER_SINGLE;
+    auto_fill_channel(0, 50, 100, 150);
+    assert(scope_poll_frame(&later) && !ui.running);
+    assert(later == !HW_TARGET_HW40 && arm_count == (HW_TARGET_HW40 ? 2u : 1u));
+}
+
 static void test_auto_channel_trigger_modes(void) {
     setup();
     ui.scope_trigger_mode = SCOPE_TRIGGER_NORMAL;
@@ -524,11 +607,11 @@ static void test_auto_channel_trigger_modes(void) {
     auto_fill_channel(0, 2, 128, 128);
     auto_fill_channel(1, 2, 128, 128);
     for (unsigned i = 0; i < SCOPE_AUTO_STABLE_FRAMES; ++i) {
-        assert(scope_poll_frame());
+        assert(test_poll_frame());
         auto_assert_applied();
     }
     assert(!scope_auto_channel_mask && ui.scope_trigger_mode == SCOPE_TRIGGER_NORMAL);
-    assert(!scope_poll_frame());
+    assert(!test_poll_frame());
 
     setup();
     ui.scope_trigger_mode = SCOPE_TRIGGER_SINGLE;
@@ -537,11 +620,11 @@ static void test_auto_channel_trigger_modes(void) {
     auto_fill_channel(0, 50, 100, 150);
     auto_fill_channel(1, 2, 128, 128);
     for (unsigned i = 0; i < SCOPE_AUTO_STABLE_FRAMES; ++i) {
-        assert(scope_poll_frame() && ui.running);
+        assert(test_poll_frame() && ui.running);
         auto_assert_applied();
     }
     assert(!scope_auto_channel_mask && ui.scope_trigger_mode == SCOPE_TRIGGER_SINGLE);
-    assert(scope_poll_frame() && !ui.running);
+    assert(test_poll_frame() && !ui.running);
 }
 
 static void test_auto_timeout_and_cancel(void) {
@@ -550,9 +633,9 @@ static void test_auto_timeout_and_cancel(void) {
     uint32_t timeout = scope_auto_frame_timeout_ms();
     unsigned configs = configure_count;
     scope_frame_age_ms = (uint16_t)(timeout - 1u);
-    assert(!scope_poll_frame() && scope_auto_time_active);
+    assert(!test_poll_frame() && scope_auto_time_active);
     scope_frame_age_ms = (uint16_t)timeout;
-    assert(!scope_poll_frame() && !scope_auto_time_active && !scope_auto_channel_mask);
+    assert(!test_poll_frame() && !scope_auto_time_active && !scope_auto_channel_mask);
     assert(configure_count == configs);
     auto_assert_applied();
 
@@ -563,9 +646,9 @@ static void test_auto_timeout_and_cancel(void) {
     timeout = scope_auto_frame_timeout_ms();
     assert(timeout >= capture_ms * 2u && timeout <= 60000u);
     scope_frame_age_ms = (uint16_t)capture_ms;
-    assert(!scope_poll_frame() && scope_auto_channel_mask == 1);
+    assert(!test_poll_frame() && scope_auto_channel_mask == 1);
     scope_frame_age_ms = (uint16_t)timeout;
-    assert(!scope_poll_frame() && !scope_auto_channel_mask);
+    assert(!test_poll_frame() && !scope_auto_channel_mask);
     auto_assert_applied();
 
     for (uint8_t tb = 0; tb < SCOPE_TIMEBASE_COUNT; ++tb) {
@@ -596,9 +679,48 @@ static void test_auto_timeout_and_cancel(void) {
     auto_assert_applied();
 }
 
+static void test_ground_calibration(void) {
+    setup();
+    scope_vdiv_ch[0] = 5;
+    scope_vdiv_ch[1] = 3;
+    ui.running = 0;
+    for (unsigned ch = 0; ch < 2; ++ch)
+        for (unsigned r = 0; r < 9; ++r) ui_settings.scope_bias[ch][r] = 1861;
+    for (unsigned pass = 0; pass < 3; ++pass) {
+        capture_ready = pass != 2;
+        scope_auto_zero_begin(1);
+        for (unsigned step = 0; scope_auto_zero_active && step < 1200; ++step) {
+            unsigned r = scope_cal.range;
+            int target = 1854 + (int)r * 2 + (pass ? 5 : 0);
+            int value = 128 + (int)scope_cal.bias[0][r] - target;
+            for (unsigned i = 0; i < SCOPE_SAMPLE_COUNT; ++i)
+                scope_samples[2*i] = (pass == 1 && r == 4) ? (i & 1u ? 90 : 160) :
+                                     value < 0 ? 0 : value > 255 ? 255 : (uint8_t)value;
+            scope_auto_zero_tick(20);
+        }
+        assert(!scope_auto_zero_active && !ui.running);
+        assert(scope_cal.failed == (pass != 0));
+        assert(flush_count == 1 && configured_range[0] == 5 && configured_range[1] == 3);
+        for (unsigned r = 0; r < 9; ++r) {
+            assert(ui_settings.scope_bias[0][r] == 1854 + 2*r);
+            assert(ui_settings.scope_bias[1][r] == 1861);
+        }
+    }
+}
+
 int main(void) {
+    scope_trace_line(0, -20, 100, -10, 0, 50, 0xabcd);
+    scope_trace_line(0, 51, 100, 60, 0, 50, 0xabcd);
+    assert(!clipped_lines);
+    scope_trace_line(0, -25, 100, 75, 0, 50, 0xabcd);
+    assert(clipped_lines == 1 && clipped[0] == 25 && clipped[1] == 0 && clipped[2] == 75 && clipped[3] == 50);
+    scope_trace_line(0, 0, 100, 0, 0, 50, 0xabcd);
+    assert(clipped_lines == 2 && clipped[0] == 0 && clipped[2] == 100);
     test_hardware_timing();
+    test_ground_calibration();
     test_frequency();
+    test_capture_ownership();
+    test_auto_sweep_keeps_real_frame();
     test_mean();
     test_math();
     test_bode_limits();

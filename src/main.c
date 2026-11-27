@@ -175,6 +175,7 @@ int main(void) {
     uint16_t input_settle_ms = STARTUP_INPUT_SETTLE_MS;
 
     board_init();
+    siggen_shutdown();
     battery_init();
     input_init();
     dmm_init();

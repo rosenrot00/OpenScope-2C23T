@@ -1,6 +1,15 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include "../src/hw.h"
+
+static uint32_t cfg, misc1, misc3;
+#undef RCC_CFGR
+#undef RCC_CFGR2
+#undef RCC_MISC3
+#define RCC_CFGR cfg
+#define RCC_CFGR2 misc1
+#define RCC_MISC3 misc3
 
 // Test the real decoder without Cortex-M interrupt instructions or MMIO calls.
 #define __asm__
@@ -516,7 +525,22 @@ static void test_scope_ranges_are_readable(void) {
     assert(font5x7_get('v') != font5x7_get('V'));
 }
 
+static void test_initial_uart_baud(void) {
+    cfg = 0xc43fa40au; // Legacy: 8 MHz / 2 * 48, APB1 / 2.
+    assert(dmm_compute_brr() == 10000u); // 96 MHz / 9600, not 192 MHz / 9600.
+    dmm_baud_index = 0;
+    dmm_detected_brr = dmm_compute_brr();
+    assert(dmm_current_brr() == 10000u);
+    cfg = 8u | (1u << 16) | (13u << 18) | (1u << 29) | (4u << 8); // 240 MHz, APB1 /2
+    assert(dmm_compute_brr() == 12500u);
+    cfg |= (1u << 17) | (7u << 11); // HEXT divider enabled; APB2 irrelevant to USART3
+    misc3 = 1u << 12; // HEXT /3, APB1 = 40 MHz
+    assert(dmm_compute_brr() == 4167u);
+    cfg = misc3 = 0;
+}
+
 int main(void) {
+    test_initial_uart_baud();
     test_stock_decoding();
     test_display_units_are_si();
     test_temperature_scale_changes_only_with_accepted_reading();

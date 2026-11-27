@@ -1,4 +1,5 @@
 #include "scope.h"
+#include "scope_timer.h"
 
 #include "board.h"
 #include "fpga.h"
@@ -27,7 +28,6 @@ enum {
     SCOPE_HW_SLOW_TIMEBASE_START = 18,
 #endif
     SCOPE_SLOW_POINT_COUNT = 300,
-    SCOPE_SLOW_TIMER_TICK_HZ = 10000u,
 };
 
 enum {
@@ -348,14 +348,7 @@ void scope_hw_slow_stop(void) {
 void scope_hw_slow_start(uint8_t timebase) {
 #if SCOPE_HW_CAPTURE
     uint16_t interval_ms = scope_slow_interval_ms_for_timebase(timebase);
-    uint32_t ticks = ((uint32_t)interval_ms * SCOPE_SLOW_TIMER_TICK_HZ) / 1000u;
-
-    if (!ticks) {
-        ticks = 1u;
-    }
-    if (ticks > 0xFFFFu) {
-        ticks = 0xFFFFu;
-    }
+    scope_timer_period_t period = scope_roll_period(scope_tmr1_hz(RCC_CFGR, RCC_CFGR2, RCC_MISC3), interval_ms);
 
     scope_hw_slow_stop();
     __asm__ volatile("cpsid i" ::: "memory");
@@ -378,8 +371,8 @@ void scope_hw_slow_start(uint8_t timebase) {
     RCC_APB2ENR |= 1u << 11; // TMR1
     TMR_CTRL1(TMR1_BASE) = 0;
     TMR_IDEN(TMR1_BASE) = 0;
-    TMR_PSC(TMR1_BASE) = 7199u; // 72 MHz / 7200 = 10 kHz
-    TMR_PR(TMR1_BASE) = ticks - 1u;
+    TMR_PSC(TMR1_BASE) = period.psc;
+    TMR_PR(TMR1_BASE) = period.reload;
     TMR_EG(TMR1_BASE) = 1u;
     TMR_STS(TMR1_BASE) = ~1u;
     scope_slow_irq_enabled = 1;
@@ -498,7 +491,7 @@ void scope_hw_arm(void) {
 #endif
 }
 
-uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
+uint8_t scope_hw_read_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
 #if SCOPE_HW_CAPTURE
     uint8_t *read_dst;
     uint16_t read_len;
@@ -542,7 +535,6 @@ uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t timebase) {
         dst[0] = dst[2];
         dst[1] = dst[3];
     }
-    fpga_capture_latch();
     scope_last_status = SCOPE_STATUS_FRAME;
     ++scope_frame_count;
     return 1;

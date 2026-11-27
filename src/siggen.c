@@ -2,11 +2,11 @@
 
 #include "board.h"
 #include "fpga.h"
+#include "fpga_clock.h"
 
 #include <stdint.h>
 
 enum {
-    FPGA_DDS_CLOCK_HZ = 100000000u,
     FPGA_FULL_SCALE_MV = 3300,
     SIGGEN_TIMING_SETTLE_MS = 2,
     SIGGEN_BUFFER_SETTLE_MS = 2,
@@ -224,7 +224,7 @@ static uint32_t tuning_word_for(uint32_t freq_hz) {
     if (freq_hz > 2000000u) {
         freq_hz = 2000000u;
     }
-    return freq_hz * 43u - freq_hz / 20u;
+    return fpga_phase_increment(freq_hz);
 }
 
 void siggen_configure(uint8_t enabled, uint8_t wave, uint32_t freq_hz, uint8_t duty_percent, uint8_t amplitude_tenths_v) {
@@ -311,13 +311,10 @@ const uint8_t *siggen_get_arb_waveform(uint16_t *count) {
 }
 
 void siggen_shutdown(void) {
-    if (last_enabled == 1u) {
-        siggen_configure(0,
-                         last_wave,
-                         last_freq_hz ? last_freq_hz : 1000u,
-                         last_duty_percent ? last_duty_percent : 50u,
-                         last_amplitude_tenths_v ? last_amplitude_tenths_v : 33u);
-    }
+    // Unknown at startup is not OFF: a warm update can leave the DDS
+    // running. Holding the FPGA in reset leaves the analog output floating.
+    if (last_enabled != 0u)
+        siggen_configure(0, SIGGEN_WAVE_DC, 0u, 50u, 1u);
 }
 
 uint8_t siggen_ready(void) {

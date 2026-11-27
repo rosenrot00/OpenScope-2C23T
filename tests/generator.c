@@ -72,7 +72,7 @@ void scope_hw_slow_start(uint8_t timebase) { (void)timebase; }
 void scope_hw_slow_stop(void) {}
 uint8_t scope_hw_enabled(void) { return 1; }
 uint8_t scope_hw_ready(void) { return 1; }
-uint8_t scope_hw_capture(uint8_t *dst, uint16_t len, uint8_t tb) {
+uint8_t scope_hw_read_capture(uint8_t *dst, uint16_t len, uint8_t tb) {
     (void)dst; (void)len; (void)tb; return 0;
 }
 uint8_t scope_hw_capture_point(uint8_t sample[2], uint8_t tb) {
@@ -105,6 +105,9 @@ const char *dmm_status_text(void) { return ""; }
 uint8_t dmm_reading_is_real(void) { return 0; }
 uint8_t dmm_live_wire_active(void) { return 0; }
 void lcd_render(lcd_render_fn_t fn, void *ctx) { (void)fn; (void)ctx; }
+void lcd_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, lcd_render_fn_t fn, void *ctx) {
+    (void)x0; (void)y0; (void)x1; (void)y1; (void)fn; (void)ctx;
+}
 void lcd_fill(uint16_t color) { (void)color; }
 void lcd_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
     (void)x; (void)y; (void)w; (void)h; (void)color;
@@ -129,6 +132,7 @@ uint8_t lcd_collecting(void) { return 0; }
 void lcd_mark_dirty(uint16_t x, uint16_t y, uint16_t w, uint16_t h) { (void)x; (void)y; (void)w; (void)h; }
 void lcd_pixel(int16_t x, int16_t y, uint16_t color) { (void)x; (void)y; (void)color; }
 uint32_t load_counter_read(void) { return 0; }
+uint32_t board_cycle_counter_read(void) { return 0; }
 uint32_t load_counter_elapsed(uint32_t start, uint32_t end) { return end - start; }
 void battery_update(void) {}
 void battery_update_charging_status(void) {}
@@ -575,7 +579,7 @@ static void test_remote_generator_control(void) {
     // The tuning word must track the requested frequency.
     ui_gen_set_frequency(3000u);
     assert(ui_gen_frequency() == 3000u);
-    assert(tuning_word == 2u * word_1500);
+    assert(tuning_word + 1u >= 2u * word_1500 && tuning_word <= 2u * word_1500 + 1u);
 
     // Out-of-range values are clamped by gen_prepare_state().
     ui_gen_set_frequency(0u);
@@ -635,6 +639,13 @@ static void test_remote_generator_control(void) {
 }
 
 int main(void) {
+    memset(output_buffer, 0xa5, sizeof(output_buffer));
+    tuning_word = 1234;
+    siggen_shutdown();
+    assert(!tuning_word && buffer_writes == 1 && timing_writes == 1);
+    assert_zero_output();
+    siggen_shutdown();
+    assert(buffer_writes == 1 && timing_writes == 1);
     test_mode_switches();
     test_generator_resumes_after_dmm();
     test_failed_csv();

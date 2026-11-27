@@ -31,6 +31,7 @@ In addition to the stock multimeter, oscilloscope, and signal generator function
 - **Modern interface** for every screen: a flat dark theme with rounded cards, anti-aliased Inter type, Lucide-style icons, proper unit symbols (Ω, µ, °C) and one colour per tool. See [Interface](#interface).
 - **Multimeter screen** with a large reading, a bar graph against the meter's current range (centred on zero in REL mode), a MIN / AVG / MAX row, and a dedicated live-wire card.
 - **Improved oscilloscope controls** with channel menus, trigger setup, move/cursor/measurement menus, rolling display, and clearer scale/readout handling.
+- **Oscilloscope baseline calibration:** disconnect the signal and short each selected probe tip to its own ground. Hold `AUTO` in the scope to calibrate all nine voltage ranges on both channels, or open a channel menu first to calibrate only that channel. `MENU` cancels without replacing the previous calibration. This sets zero, not gain.
 - **Runtime USB mass storage** while the device is running.
 - **USB serial (CDC) telemetry and remote control** with 300-point scope traces and signal-generator controls while viewing the scope.
   The community-developed Windows companion [FNIRSI 2C23T Studio](https://github.com/Daddelgreis74/fnirsi-2c23t-studio) uses this interface for live measurements, data logging, remote controls, and screenshots.
@@ -120,8 +121,8 @@ make release
 
 Output files:
 
-- `dist/F2C23T-v2026.11.9-08008000.bin`
-- `dist/F2C23T-v2026.11.9-HW4.0-08007000.bin`
+- `dist/F2C23T-v2026.11.10-08008000.bin`
+- `dist/F2C23T-v2026.11.10-HW4.0-08007000.bin`
 
 Each image is checked against the flash layout it was built for, and the build
 fails if it does not fit its slot, if it would overlap the update staging area
@@ -160,8 +161,8 @@ This function never erases or programs the MCU's internal flash and never change
 
 Download the correct `.bin` file from the release assets:
 
-- Use `F2C23T-v2026.11.9-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
-- Use `F2C23T-v2026.11.9-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
+- Use `F2C23T-v2026.11.10-08008000.bin` if your device did **not** already have firmware `2.1.0` installed.
+- Use `F2C23T-v2026.11.10-HW4.0-08007000.bin` if your device already came with, or was already running, firmware `2.1.0`.
 
 When upgrading to v2026.11.4, saved settings and user calibration from older OpenScope builds are not carried over. The new settings signature prevents data from another firmware from being interpreted as OpenScope settings.
 
@@ -208,7 +209,7 @@ The running firmware and update status can also be read over the USB serial
 port. A staging error stays available until the next update attempt or restart:
 
 ```
-VER?  ->  $VER,v2026.11.9,HW4.0
+VER?  ->  $VER,v2026.11.10,HW4.0
 UPD?  ->  $UPD,<state>,<error>,<bytes staged>,<expected size>
 ```
 

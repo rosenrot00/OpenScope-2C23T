@@ -1,6 +1,8 @@
 #include "fw_update.h"
 
 #include "app_config.h"
+#include "scope.h"
+#include "siggen.h"
 #include "hw.h"
 
 #include <stdint.h>
@@ -648,6 +650,10 @@ void fw_update_service(void) {
     }
     fw_status.state = FW_UPDATE_STATE_APPLYING;
     ++fw_status.sequence;
+    // The RAM installer does not power-cycle the FPGA. Park the DAC at
+    // zero with the scope ISR off the shared bus before handing over.
+    scope_hw_slow_stop();
+    siggen_shutdown();
     fw_ram_install(FW_STAGE_BASE, FW_APP_BASE, size);
 }
 

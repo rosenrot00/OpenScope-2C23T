@@ -1,5 +1,5 @@
 PROJECT := f2c23t_hello
-VERSION ?= v2026.11.9
+VERSION ?= v2026.11.10
 BUILD_ROOT ?= build
 BUILD ?= $(BUILD_ROOT)
 DIST ?= dist
@@ -67,6 +67,7 @@ SRCS += src/fpga_bitstream_hw4.c
 else
 SRCS += src/fpga_bitstream.c
 endif
+SRCS += src/fpga_clock.c
 OBJS := $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 
 HOST_TEST_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -fsanitize=address,undefined
@@ -75,6 +76,7 @@ HOST_TEST_LINK := -Wl,-dead_strip
 else
 HOST_TEST_LINK := -Wl,--gc-sections -lm
 endif
+HOST_TEST_LINK += src/fpga_clock.c
 HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloader-hw4 \
                   $(BUILD_ROOT)/tests/bootloader_export-old $(BUILD_ROOT)/tests/bootloader_export-hw4 \
                   $(BUILD_ROOT)/tests/dmm-old $(BUILD_ROOT)/tests/dmm-hw4 \
@@ -88,6 +90,13 @@ HOST_TEST_BINS := $(BUILD_ROOT)/tests/bootloader-old $(BUILD_ROOT)/tests/bootloa
                   $(BUILD_ROOT)/tests/fw_update-old $(BUILD_ROOT)/tests/fw_update-hw4 \
                   $(BUILD_ROOT)/tests/w25q-old $(BUILD_ROOT)/tests/w25q-hw4
 
+$(HOST_TEST_BINS): src/fpga_clock.c src/fpga_clock.h src/scope.h
+$(BUILD)/fpga.o $(BUILD)/scope.o $(BUILD)/ui.o $(BUILD)/siggen.o $(BUILD)/fpga_clock.o: src/fpga_clock.h
+$(BUILD)/scope.o $(BUILD)/ui.o: src/scope.h
+$(BUILD)/scope.o: src/scope_timer.h
+$(BUILD)/dmm.o $(BUILD)/scope.o: src/clock_tree.h
+$(BUILD_ROOT)/tests/dmm-old $(BUILD_ROOT)/tests/dmm-hw4 $(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4 $(BUILD_ROOT)/tests/ui_render-old $(BUILD_ROOT)/tests/ui_render-hw4: src/clock_tree.h
+.DEFAULT_GOAL := all
 .PHONY: all clean clean-dist release release-lt-hw4 release-hw4 test preview screenshots
 
 all: $(BUILD)/$(PROJECT).bin
@@ -129,7 +138,7 @@ $(BUILD_ROOT)/tests/generator-old $(BUILD_ROOT)/tests/generator-hw4: tests/gener
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< src/siggen.c src/fft.c src/gfx.c src/ui_fonts.c $(HOST_TEST_LINK) -o $@
 
-$(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4: tests/fpga_timing.c src/fpga.c src/fpga.h src/hw.h
+$(BUILD_ROOT)/tests/fpga_timing-old $(BUILD_ROOT)/tests/fpga_timing-hw4: tests/fpga_timing.c src/fpga.c src/fpga.h src/hw.h src/scope_timer.h
 	@mkdir -p $(dir $@)
 	$(CLANG) $(HOST_TEST_FLAGS) -DHW_TARGET_HW40=$(if $(filter %-hw4,$@),1,0) $< $(HOST_TEST_LINK) -o $@
 

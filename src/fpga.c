@@ -3,11 +3,13 @@
 #include "app_config.h"
 #include "board.h"
 #include "fpga_bitstream.h"
+#include "fpga_clock.h"
 #include "hw.h"
 
 #include <stdint.h>
 
 enum {
+    FPGA_CONFIG_RESET = 1u << (HW_TARGET_HW40 ? 8 : 9),
     FPGA_LATCH_SETTLE_MS = 1,
     SPI_CAPTURE_TIMEOUT = 60000u,
 
@@ -31,6 +33,7 @@ static void fpga_start_clock_output(void) {
     // and only programs this AT32-specific CFGR2 field during board init.
     RCC_CFGR2 = (RCC_CFGR2 & ~(7u << 16)) | (2u << 16);
 #else
+    fpga_clock_select_legacy(RCC_CFGR);
     RCC_CFGR = (RCC_CFGR & ~(7u << 24)) | (4u << 24);
     RCC_CFGR2 = (RCC_CFGR2 & ~((1u << 16) | (15u << 28))) | (11u << 28);
 #endif
@@ -48,7 +51,6 @@ enum {
     FPGA_HW4_MISO_PIN = 1u << 4,  // PB4, also capture-ready in runtime mode
     FPGA_HW4_MOSI_PIN = 1u << 5,  // PB5
     FPGA_HW4_SELECT_PIN = 1u << 15, // PA15
-    FPGA_HW4_RESET_PIN = 1u << 8, // PC8
     FPGA_HW4_AUX_PIN = 1u << 10,  // PC10, initialized by stock 2.1.0 board setup
     FPGA_HW4_READY_POLL_CYCLES = 4000u,
 };
@@ -197,7 +199,7 @@ static void fpga_hw4_begin(void) {
     gpio_config_mask(GPIOB_BASE, FPGA_HW4_MISO_PIN, 0x4u);
     gpio_config_mask(GPIOA_BASE, FPGA_HW4_SELECT_PIN, 0x1u);
     gpio_config_mask(GPIOA_BASE, 1u << 8, 0x9u);
-    gpio_config_mask(GPIOC_BASE, FPGA_HW4_RESET_PIN | FPGA_HW4_AUX_PIN, 0x1u);
+    gpio_config_mask(GPIOC_BASE, FPGA_CONFIG_RESET | FPGA_HW4_AUX_PIN, 0x1u);
     fpga_hw4_bus_input();
 
     gpio_set(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
@@ -215,9 +217,9 @@ void fpga_init_once(void) {
 
     fpga_hw4_begin();
     gpio_set(GPIOA_BASE, FPGA_HW4_SELECT_PIN);
-    gpio_clear(GPIOC_BASE, FPGA_HW4_RESET_PIN);
+    gpio_clear(GPIOC_BASE, FPGA_CONFIG_RESET);
     delay_ms(10);
-    gpio_set(GPIOC_BASE, FPGA_HW4_RESET_PIN);
+    gpio_set(GPIOC_BASE, FPGA_CONFIG_RESET);
     delay_ms(1);
 
     (void)fpga_hw4_read_register32(0x11000000u);
@@ -366,7 +368,7 @@ static void fpga_spi_begin(void) {
 
     AFIO_MAPR = (AFIO_MAPR & ~(7u << 24)) | (2u << 24); // release PB3/PB4/PB5 from JTAG
 
-    gpio_config_mask(GPIOC_BASE, (1u << 0) | (1u << 1) | (1u << 2) | (1u << 9) | (1u << 10), 0x1);
+    gpio_config_mask(GPIOC_BASE, (1u << 0) | (1u << 1) | (1u << 2) | FPGA_CONFIG_RESET | (1u << 10), 0x1);
     gpio_config_mask(GPIOA_BASE, 1u << 15, 0x1);
     gpio_config_mask(GPIOB_BASE, (1u << 3) | (1u << 5), 0x9u);
     gpio_config_mask(GPIOB_BASE, 1u << 4, 0x4);
@@ -401,9 +403,9 @@ void fpga_init_once(void) {
     fpga_spi_begin();
 
     gpio_clear(GPIOA_BASE, 1u << 15);
-    gpio_clear(GPIOC_BASE, 1u << 9);
+    gpio_clear(GPIOC_BASE, FPGA_CONFIG_RESET);
     delay_ms(10);
-    gpio_set(GPIOC_BASE, 1u << 9);
+    gpio_set(GPIOC_BASE, FPGA_CONFIG_RESET);
     delay_ms(1);
 
     for (uint32_t i = 0; i < fpga_bitstream_len; ++i) {

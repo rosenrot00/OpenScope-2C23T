@@ -10,6 +10,7 @@
 #undef dmm_current_mode
 #undef volatile
 #undef __asm__
+#define SCOPE_UI_SAFE_STUB 0
 #include "../src/ui.c"
 #include "../tools/host_display.h"
 #include "../src/font.c"
@@ -28,6 +29,8 @@ uint8_t battery_is_charging(void) { return test_charging; }
 uint8_t usb_cdc_is_configured(void) { return test_usb; }
 uint8_t scope_hw_enabled(void) { return 1; }
 uint8_t scope_hw_ready(void) { return 1; }
+uint32_t load_counter_read(void) { return 0; }
+uint32_t load_counter_elapsed(uint32_t start, uint32_t end) { return start - end; }
 void fw_update_status(fw_update_status_t *s) { memset(s, 0, sizeof(*s)); }
 uint8_t arb_file_count(void) { return 0; }
 const char *arb_file_name(uint8_t index) { (void)index; return ""; }
@@ -123,6 +126,10 @@ static void test_status_snapshot(void) {
     test_charging = 1;
     assert(battery_snapshot_changed());
     test_pct = 76;
+    assert(battery_snapshot_changed());
+    gen_output_applied = 1;
+    assert(battery_snapshot_changed());
+    gen_output_applied = 0;
     assert(battery_snapshot_changed());
 }
 
@@ -307,6 +314,103 @@ static void test_trigger_line_position(void) {
     }
 }
 
+static void test_scope_trace_columns(void) {
+    uint8_t samples[302];
+    memset(samples, 90, sizeof(samples));
+    samples[2] = 40; // A narrow pulse between former stride-three vertices.
+    samples[5] = samples[6] = 0;
+    samples[8] = samples[9] = 255;
+    samples[300] = 100;
+    for (uint8_t extra = 0; extra <= 1; ++extra) {
+        memset(frame_buffer, 0, sizeof(frame_buffer));
+        host_display_begin_render();
+        scope_draw_columns(samples, sizeof(samples), 9, 29, 216, extra, C_CH1);
+        for (unsigned x = 0; x < LCD_WIDTH; ++x) {
+            for (unsigned y = 0; y < LCD_HEIGHT; ++y) {
+                int lit = 0;
+                if (x >= 9 && x < 311 && y >= 29 && y <= 216) {
+                    unsigned i = x - 9, a = samples[i];
+                    unsigned b = i + 1 < sizeof(samples) ? samples[i + 1] : a;
+                    lit = y >= (a < b ? a : b) && y <= (a > b ? a : b) + extra;
+                }
+                assert(frame_buffer[y * LCD_WIDTH + x] == (lit ? C_CH1 : 0));
+            }
+        }
+    }
+}
+
+static void check_roll_pixels(int partial) {
+    ui_render_job(UI_RENDER_SCOPE_FRAME);
+    if (partial) {
+        assert(dirty_count <= 1);
+        if (dirty_count) assert(dirty_rects[0].y0 >= PLOT_Y && dirty_rects[0].y1 < PLOT_Y + PLOT_H);
+    } else {
+        assert(dirty_count == 1 && dirty_rects[0].x0 == 0 && dirty_rects[0].y0 == 0 &&
+               dirty_rects[0].x1 == LCD_WIDTH - 1 && dirty_rects[0].y1 == LCD_HEIGHT - 1);
+    }
+    memcpy(previous_frame, frame_buffer, sizeof(previous_frame));
+    lcd_render(ui_render_dispatch, 0);
+    for (unsigned i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
+        if (previous_frame[i] != frame_buffer[i]) {
+            fprintf(stderr, "Roll mismatch at %u,%u: %x != %x, count=%u offset=%d damage=%d,%d..%d,%d\n",
+                    i % LCD_WIDTH, i / LCD_WIDTH, previous_frame[i], frame_buffer[i], scope_slow_roll_count,
+                    scope_roll_display_offset, roll_damage.x0, roll_damage.y0, roll_damage.x1, roll_damage.y1);
+            break;
+        }
+    }
+    assert(!memcmp(previous_frame, frame_buffer, sizeof(previous_frame)));
+}
+
+static void test_roll_damage(void) {
+    current_render_job = UI_RENDER_SCOPE_FRAME;
+    ui.mode = UI_MODE_SCOPE; ui.overlay = UI_OVERLAY_NONE;
+    ui.chrome_visible = ui.softkeys_ms = 0;
+    ui.scope_display = SCOPE_DISPLAY_YT;
+    ui.scope_timebase = 21;
+    scope_ch_enabled[0] = scope_ch_enabled[1] = ui.running = scope_frame_valid = 1;
+    scope_hide_traces = scope_math_mode = scope_fft_src = 0;
+    ui.scope_cursor_mode = SCOPE_CURSOR_TIME;
+    scope_cursor_x[0] = 60; scope_cursor_x[1] = 200;
+    scope_measure_visible = 1;
+    scope_measure_mask[0] = scope_measure_mask[1] = scope_measure_bit(SCOPE_MEASURE_VPP);
+    scope_slow_roll_count = scope_slow_roll_head = scope_slow_roll_seq = 0;
+    roll_painted.valid = 0;
+    for (unsigned i = 0; i < SCOPE_SLOW_ROLL_MAX_POINTS + 27; ++i) {
+        scope_soft_roll_store_point(i % 31 ? 75 + i % 110 : 255, 170 - i % 85);
+        if (i % 9 == 0 || i == SCOPE_SLOW_ROLL_MAX_POINTS - 1) {
+            scope_min_raw[0] = i % 2 ? 0 : 75;
+            check_roll_pixels(i != 0);
+        }
+    }
+    check_roll_pixels(1);
+    check_roll_pixels(1); // Same displayed history and measurements, no LCD window.
+    assert(roll_damage.x1 < roll_damage.x0);
+    for (int offset = -57; offset <= 57; offset += 114) {
+        scope_roll_display_offset = offset;
+        check_roll_pixels(1);
+        scope_soft_roll_store_point(16, 225);
+        check_roll_pixels(1);
+    }
+    ui.running = 0;
+    check_roll_pixels(0); // HOLD replaces ROLL in the footer.
+    ui.running = 1;
+    check_roll_pixels(0);
+    scope_soft_roll_store_point(130, 125);
+    ui_render_job(UI_RENDER_BATTERY); // Header-only updates preserve the last painted plot.
+    check_roll_pixels(1);
+    ui_render_job(UI_RENDER_LOCAL_CHANGE);
+    check_roll_pixels(0);
+    // A flat input still extends to the new point; it does not repaint the grid.
+    ui.scope_timebase = SCOPE_TIMEBASE_COUNT - 1;
+    scope_roll_display_offset = 0;
+    scope_slow_roll_count = scope_slow_roll_head = 0;
+    scope_soft_roll_store_point(128, 128);
+    check_roll_pixels(0);
+    scope_soft_roll_store_point(128, 128);
+    check_roll_pixels(1);
+    assert(roll_damage.x0 == roll_x(0) && roll_damage.x1 == roll_x(1));
+}
+
 int main(void) {
     test_low_current_bar();
     test_bar_ratios();
@@ -317,6 +421,8 @@ int main(void) {
     test_partial_headers();
     test_trigger_labels();
     test_trigger_line_position();
-    printf("UI rendering: bar scaling, incremental headers, trigger labels/position and dirty coverage passed (HW4=%d)\n", HW_TARGET_HW40);
+    test_scope_trace_columns();
+    test_roll_damage();
+    printf("UI rendering: bars, headers, trigger, roll pixel equivalence and dirty coverage passed (HW4=%d)\n", HW_TARGET_HW40);
     return 0;
 }

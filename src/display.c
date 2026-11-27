@@ -467,6 +467,27 @@ static uint8_t band_flush_start(uint16_t *buffer, uint16_t x0, uint16_t y0, uint
 }
 #endif
 
+void lcd_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, lcd_render_fn_t draw, void *ctx) {
+    if (!draw || x0 > x1 || y0 > y1 || x1 >= LCD_WIDTH || y1 >= LCD_HEIGHT) return;
+    if (lcd_pass == LCD_PASS_COLLECT) {
+        dirty_mark(x0, y0, x1 - x0 + 1u, y1 - y0 + 1u);
+        return;
+    }
+    if (lcd_pass != LCD_PASS_RENDER) return;
+    dirty_rect_t saved = {band_x0, band_y0, band_x1, band_y1};
+    if (x0 < band_x0) x0 = band_x0;
+    if (y0 < band_y0) y0 = band_y0;
+    if (x1 > band_x1) x1 = band_x1;
+    if (y1 > band_y1) y1 = band_y1;
+    if (x0 > x1 || y0 > y1) return;
+    uint16_t *saved_buffer = band_buffer;
+    band_buffer += (uint32_t)(y0 - band_y0) * LCD_WIDTH;
+    band_x0 = x0; band_y0 = y0; band_x1 = x1; band_y1 = y1;
+    draw(ctx);
+    band_buffer = saved_buffer;
+    band_x0 = saved.x0; band_y0 = saved.y0; band_x1 = saved.x1; band_y1 = saved.y1;
+}
+
 void lcd_render(lcd_render_fn_t render, void *ctx) {
     if (!render) {
         return;

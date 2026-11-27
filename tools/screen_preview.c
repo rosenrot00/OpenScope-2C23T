@@ -35,6 +35,7 @@ uint8_t usb_cdc_is_configured(void) { return charging; }
 uint8_t scope_hw_enabled(void) { return 1; }
 uint8_t scope_hw_ready(void) { return 1; }
 uint32_t load_counter_read(void) { return 0; }
+uint32_t board_cycle_counter_read(void) { return 0; }
 uint32_t load_counter_elapsed(uint32_t start, uint32_t end) { return end - start; }
 void fw_update_status(fw_update_status_t *status) { memset(status, 0, sizeof(*status)); }
 uint8_t arb_file_count(void) { return 0; }
@@ -256,14 +257,13 @@ int main(void) {
     // Baseline calibration: both channels, then one, part-way through.
     scope_auto_zero_active = 1;
     scope_auto_zero_mask = 0x03u;
-    scope_auto_zero_steps_left = 70;
+    scope_cal.range = 3;
     scope_shot("scope-calibration");
     scope_auto_zero_mask = 0x02u;
-    scope_auto_zero_steps_left = 25;
+    scope_cal.range = 7;
     scope_shot("scope-calibration-ch2");
     scope_auto_zero_active = 0;
     scope_auto_zero_mask = 0;
-    scope_auto_zero_steps_left = 0;
     ui.running = 0;
     ui.active_ch = 2;
     ui.scope_trigger_edge = 1;
