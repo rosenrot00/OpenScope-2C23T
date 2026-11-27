@@ -36,6 +36,7 @@ Rendered on a PC by the firmware's own drawing code with `make screenshots`: eac
 | <img src="scope-fft.png" width="320"/><br/>FFT view | <img src="scope-math-menu.png" width="320"/><br/>Analytical / Math menu |
 | <img src="scope-row-channel.png" width="320"/><br/>Channel menu | <img src="scope-row-main.png" width="320"/><br/>Main parameter row |
 | <img src="scope-row-measure.png" width="320"/><br/>Measurement menu | <img src="scope-row-trigger.png" width="320"/><br/>Trigger menu |
+| <img src="scope-calibration.png" width="320"/><br/>Baseline calibration, both channels | <img src="scope-calibration-ch2.png" width="320"/><br/>Baseline calibration, CH2 only |
 
 ## Signal generator
 

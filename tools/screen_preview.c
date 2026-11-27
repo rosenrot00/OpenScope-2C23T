@@ -115,6 +115,7 @@ static void scope_shot(const char *name) {
     if (ui.softkeys_ms || scope_any_menu_open()) {
         draw_softkeys();
     }
+    draw_scope_calibration_overlay();
     save(name);
     ui.mode = UI_MODE_DMM;
 }
@@ -252,6 +253,17 @@ int main(void) {
     ui.scope_timebase = 8;
     ui.running = 1;
     scope_shot("scope-1");
+    // Baseline calibration: both channels, then one, part-way through.
+    scope_auto_zero_active = 1;
+    scope_auto_zero_mask = 0x03u;
+    scope_auto_zero_steps_left = 70;
+    scope_shot("scope-calibration");
+    scope_auto_zero_mask = 0x02u;
+    scope_auto_zero_steps_left = 25;
+    scope_shot("scope-calibration-ch2");
+    scope_auto_zero_active = 0;
+    scope_auto_zero_mask = 0;
+    scope_auto_zero_steps_left = 0;
     ui.running = 0;
     ui.active_ch = 2;
     ui.scope_trigger_edge = 1;
